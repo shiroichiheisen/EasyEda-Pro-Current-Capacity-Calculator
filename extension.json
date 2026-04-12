@@ -1,0 +1,44 @@
+{
+	"name": "trace-current-capacity",
+	"uuid": "c4d8e2f1a6b34d7e9c0f5a2b8e1d3c7f",
+	"displayName": "PCB Trace Current Capacity Calculator",
+	"description": "Calculates the maximum current capacity of each PCB trace based on IPC-2221B standard, with canvas visualization",
+	"version": "1.9.0",
+	"publisher": "",
+	"engines": {
+		"eda": "^3.0.0"
+	},
+	"license": "MIT",
+	"categories": "PCB",
+	"keywords": [
+		"PCB",
+		"current",
+		"capacity",
+		"trace",
+		"IPC-2221B",
+		"thermal"
+	],
+	"activationEvents": {},
+	"entry": "./dist/index",
+	"dependentExtensions": {},
+	"headerMenus": {
+		"pcb": [
+			{
+				"id": "TraceCurrentCapacity",
+				"title": "Current Capacity",
+				"menuItems": [
+					{
+						"id": "RunCalc",
+						"title": "Calculate Current Capacity...",
+						"registerFn": "runCurrentCalc"
+					},
+					{
+						"id": "About",
+						"title": "About...",
+						"registerFn": "about"
+					}
+				]
+			}
+		]
+	}
+}

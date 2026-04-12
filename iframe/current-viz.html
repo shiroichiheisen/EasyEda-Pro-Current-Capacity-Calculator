@@ -1,0 +1,1918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Current Capacity Visualization</title>
+<script src="/iframe/current-calc.js"></script>
+<style>
+:root {
+  --bg: #1a1a2e; --bg2: #16213e; --bg3: #0f3460; --fg: #eee; --fg2: #aaa;
+  --border: #0f3460; --input-bg: #0d1b2a; --input-fg: #eee;
+  --accent: #4cc9f0; --green: #4CAF50; --red: #F44336; --orange: #FF9800;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; overflow: hidden; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #111; color: var(--fg); display: flex; flex-direction: column; }
+
+.toolbar { display: flex; align-items: center; gap: 10px; padding: 6px 14px; background: var(--bg2); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+.toolbar h1 { font-size: 14px; font-weight: 600; white-space: nowrap; }
+.toolbar label { font-size: 11px; color: var(--fg2); }
+.toolbar input, .toolbar select { font-size: 11px; padding: 3px 6px; border-radius: 4px; border: 1px solid var(--border); background: var(--input-bg); color: var(--input-fg); }
+.toolbar button { font-size: 11px; padding: 3px 10px; border-radius: 4px; border: none; background: var(--accent); color: #fff; cursor: pointer; }
+.toolbar button.secondary { background: transparent; border: 1px solid var(--border); color: var(--fg2); }
+.spacer { flex: 1; }
+
+.canvas-wrap { flex: 1; position: relative; overflow: hidden; }
+canvas { display: block; width: 100%; height: 100%; }
+
+/* Loading overlay */
+.loading-overlay {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  background: #111; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; z-index: 999;
+  transition: opacity 0.3s ease;
+}
+.loading-overlay.hidden { opacity: 0; pointer-events: none; }
+.loading-spinner {
+  width: 48px; height: 48px; border: 4px solid var(--border);
+  border-top-color: var(--accent); border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-overlay span { margin-top: 16px; font-size: 13px; color: var(--fg2); }
+
+/* Legend */
+.legend {
+  position: absolute; bottom: 12px; left: 12px; background: rgba(22,33,62,0.92);
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px;
+  pointer-events: none; min-width: 160px;
+}
+.legend h4 { font-size: 11px; margin-bottom: 6px; }
+.legend-bar { width: 100%; height: 14px; border-radius: 3px; margin: 4px 0; }
+.legend-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--fg2); }
+
+/* Info panel */
+.info-panel {
+  position: absolute; top: 12px; right: 12px; width: 240px; background: rgba(22,33,62,0.95);
+  border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+  display: flex; flex-direction: column; max-height: calc(100% - 24px); overflow: hidden;
+}
+.info-panel h4 { font-size: 12px; margin-bottom: 8px; }
+#stats-content { font-size: 11px; color: var(--fg2); flex-shrink: 0; }
+#bottleneck-list { overflow-y: auto; flex: 1; min-height: 0; margin-top: 8px; }
+.bottleneck-item { padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-bottom: 2px; }
+.bottleneck-item:hover { background: rgba(76,201,240,0.15); }
+.bottleneck-item.selected { background: rgba(76,201,240,0.25); }
+
+/* Hover label */
+#hover-label {
+  position: absolute; pointer-events: none; display: none;
+  background: rgba(22,33,62,0.95); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 10px; font-size: 11px; white-space: nowrap; z-index: 10;
+}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <h1>⚡ Current Visualization</h1>
+  <label>ΔT:</label>
+  <input type="number" id="delta-t" value="10" min="1" max="100" step="1" style="width:45px;">
+  <label>°C</label>
+  <label style="margin-left:6px;">Min I:</label>
+  <input type="number" id="min-current" value="0" min="0" max="100" step="0.1" style="width:50px;">
+  <label>A</label>
+  <label style="margin-left:6px;">Max I:</label>
+  <input type="number" id="max-current" value="0" min="0" max="1000" step="0.1" style="width:50px;" placeholder="0=auto">
+  <label>A</label>
+  <select id="viz-layer-filter">
+    <option value="__all__">All layers</option>
+  </select>
+  <label><input type="checkbox" id="chk-vias" checked> Vias</label>
+  <label><input type="checkbox" id="chk-zones"> Zones</label>
+  <label><input type="checkbox" id="chk-outline" checked> Board</label>
+  <select id="calc-mode" style="margin-left:6px;">
+    <option value="total" selected>Total - Holes</option>
+    <option value="segment">Segment</option>
+  </select>
+  <label style="margin-left:6px;">Grid:</label>
+  <input type="number" id="grid-size" value="25" min="2" max="100" step="1" style="width:42px;">
+  <label style="margin-left:6px;">Clearance:</label>
+  <input type="number" id="trace-clearance" value="0.4" min="0" max="5" step="0.05" style="width:50px;">
+  <label>mm</label>
+  <div class="spacer"></div>
+  <button id="btn-debug-viz" class="secondary" style="background:#e63946;color:#fff;">🐛 Debug</button>
+  <button id="btn-fit" class="secondary">⊞ Fit</button>
+</div>
+
+<!-- Debug Export Modal -->
+<div id="debug-viz-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;"></div>
+<div id="debug-viz-panel" style="display:none;position:fixed;top:5%;left:10%;right:10%;bottom:5%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;z-index:101;padding:16px;display:none;flex-direction:column;">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+    <h2 style="font-size:14px;flex:1;">🐛 Debug — Viz Calculation Data</h2>
+    <button id="btn-dbgviz-copy" class="secondary" style="font-size:11px;">📋 Copy</button>
+    <button id="btn-dbgviz-download" class="secondary" style="font-size:11px;">💾 Download</button>
+    <button id="btn-dbgviz-close" style="font-size:11px;">Close</button>
+  </div>
+  <textarea id="debug-viz-json" readonly style="flex:1;width:100%;font-family:Consolas,'Courier New',monospace;font-size:11px;background:var(--input-bg);color:var(--input-fg);border:1px solid var(--border);border-radius:4px;padding:8px;resize:none;white-space:pre;tab-size:2;"></textarea>
+</div>
+
+<div class="canvas-wrap">
+  <canvas id="pcb-canvas"></canvas>
+
+  <!-- Loading overlay -->
+  <div class="loading-overlay" id="loading-overlay">
+    <div class="loading-spinner"></div>
+    <span>Loading PCB data…</span>
+  </div>
+
+  <div class="legend">
+    <h4>Current Capacity Scale</h4>
+    <div class="legend-bar" id="legend-bar"></div>
+    <div class="legend-labels" id="legend-labels">
+      <span>0A</span>
+      <span>-</span>
+      <span>-</span>
+      <span>-</span>
+    </div>
+    <div style="margin-top:6px;font-size:10px;">
+      <span style="color:#F44336;">■</span> Low &nbsp;
+      <span style="color:#FF9800;">■</span> Medium &nbsp;
+      <span style="color:#4CAF50;">■</span> High
+    </div>
+    <div style="margin-top:4px;font-size:10px;">
+      <span style="color:#9C27B0;">●</span> Via &nbsp;
+      <span style="color:rgba(100,180,100,0.5);">■</span> Zone
+    </div>
+  </div>
+
+  <div id="hover-label"></div>
+
+  <div class="info-panel" id="info-panel">
+    <h4>📊 Statistics</h4>
+    <div id="stats-content">Loading...</div>
+    <div id="bottleneck-list"></div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════
+// State
+// ═══════════════════════════════════════
+var VIZ_STORAGE_KEY = 'current-capacity-viz';
+var pcbData = null;
+var analysisResults = null;
+var stackup = null;
+var currentMap = {}; // id → iMax
+var globalMaxI = 10; // dynamic max current for color scale
+
+var canvas, ctx;
+var viewX = 0, viewY = 0, viewScale = 1;
+var isDragging = false, dragStartX = 0, dragStartY = 0;
+var mouseDownX = 0, mouseDownY = 0;
+var hoveredTrace = null;
+var lastMouseX = 0, lastMouseY = 0;
+var selectedNet = null;
+var zoneGrids = {}; // id → { cells: [...], pts: [...] }
+
+// ═══════════════════════════════════════
+// Init
+// ═══════════════════════════════════════
+canvas = document.getElementById('pcb-canvas');
+ctx = canvas.getContext('2d');
+
+(async function init() {
+  try {
+    var vizData = await eda.sys_Storage.getExtensionUserConfig(VIZ_STORAGE_KEY);
+    if (vizData) {
+      pcbData = vizData.pcbData;
+      analysisResults = vizData.analysisData;
+      stackup = vizData.stackup;
+      if (vizData.deltaT) document.getElementById('delta-t').value = vizData.deltaT;
+    }
+  } catch(e) {}
+
+  if (!pcbData) {
+    document.getElementById('stats-content').textContent = 'No data. Open from main panel.';
+    var ov = document.getElementById('loading-overlay');
+    if (ov) { ov.classList.add('hidden'); setTimeout(function(){ ov.style.display='none'; }, 350); }
+    return;
+  }
+
+  // Let the browser paint the loading overlay before heavy work
+  await new Promise(function(resolve) { requestAnimationFrame(function() { requestAnimationFrame(resolve); }); });
+
+  recalculate();
+  populateFilters();
+  // Set canvas size before fitView so dimensions are correct
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  fitView();
+  updateStats();
+  updateBottleneckList();
+  draw();
+  // Hide loading overlay
+  var ov = document.getElementById('loading-overlay');
+  if (ov) { ov.classList.add('hidden'); setTimeout(function(){ ov.style.display='none'; }, 350); }
+})();
+
+function isCopperLayer(layerId) {
+  if (!pcbData || !pcbData.copperLayerIds) return true; // fallback: allow all
+  return !!pcbData.copperLayerIds[layerId];
+}
+
+function recalculate() {
+  if (!pcbData) return;
+  var deltaT = parseFloat(document.getElementById('delta-t').value) || 10;
+  var copperLayerCount = pcbData.copperLayerCount || 2;
+  currentMap = {};
+
+  (pcbData.lines || []).forEach(function(l) {
+    if (!isCopperLayer(l.layer)) return;
+    var isInternal = CurrentCalc.isInternalLayer(l.layer, copperLayerCount);
+    var cuThick = isInternal ? (stackup ? stackup.innerCopperMm : 0.0175) : (stackup ? stackup.outerCopperMm : 0.035);
+    currentMap[l.id] = CurrentCalc.calcMaxCurrent(l.width, cuThick, deltaT, isInternal);
+  });
+
+  (pcbData.arcs || []).forEach(function(a) {
+    if (!isCopperLayer(a.layer)) return;
+    var isInternal = CurrentCalc.isInternalLayer(a.layer, copperLayerCount);
+    var cuThick = isInternal ? (stackup ? stackup.innerCopperMm : 0.0175) : (stackup ? stackup.outerCopperMm : 0.035);
+    currentMap[a.id] = CurrentCalc.calcMaxCurrent(a.width, cuThick, deltaT, isInternal);
+  });
+
+  // Zones (copper pours / ground planes) — 2D grid heatmap analysis
+  zoneGrids = {};
+
+  // ── Pre-group zones by net+layer for merging overlapping same-net pours ──
+  var zoneGroupMap = {}; // "net|layer" → [zone, zone, ...]
+  (pcbData.zones || []).forEach(function(z) {
+    if (!isCopperLayer(z.layer)) return;
+    if (!z.bounds) return;
+    var key = (z.net || '') + '|' + z.layer;
+    if (!zoneGroupMap[key]) zoneGroupMap[key] = [];
+    zoneGroupMap[key].push(z);
+  });
+  // Build sibling lookup: zone.id → [sibling zones]
+  var zoneSiblings = {};
+  for (var gk in zoneGroupMap) {
+    var grp = zoneGroupMap[gk];
+    for (var gi = 0; gi < grp.length; gi++) {
+      var sibs = [];
+      for (var gj = 0; gj < grp.length; gj++) {
+        if (gi === gj) continue;
+        sibs.push(grp[gj]);
+      }
+      zoneSiblings[grp[gi].id] = sibs;
+    }
+  }
+
+  (pcbData.zones || []).forEach(function(z) {
+    if (!isCopperLayer(z.layer)) return;
+    if (!z.bounds) return;
+    var isInternal = CurrentCalc.isInternalLayer(z.layer, copperLayerCount);
+    var cuThick = isInternal ? (stackup ? stackup.innerCopperMm : 0.0175) : (stackup ? stackup.outerCopperMm : 0.035);
+    var calcMode = document.getElementById('calc-mode').value;
+
+    var pts = z.outlinePoints;
+    if (!pts || pts.length < 3) {
+      pts = [
+        { x: z.bounds.minX, y: z.bounds.minY },
+        { x: z.bounds.maxX, y: z.bounds.minY },
+        { x: z.bounds.maxX, y: z.bounds.maxY },
+        { x: z.bounds.minX, y: z.bounds.maxY }
+      ];
+    }
+
+    // ── Collect siblings (same net + same layer) for merged pour calculation ──
+    var siblings = zoneSiblings[z.id] || [];
+    var allPtsList = [pts]; // array of polygon point arrays
+    for (var sbi = 0; sbi < siblings.length; sbi++) {
+      var sp = siblings[sbi].outlinePoints;
+      if (sp && sp.length >= 3) allPtsList.push(sp);
+    }
+
+    var holes = (z.holes || []).slice();
+    var traceObs = (z.traceObstacles || []).slice();
+    var padObs = (z.padObstacles || []).slice();
+    // Merge holes, traceObs, padObs from siblings
+    for (var sbi2 = 0; sbi2 < siblings.length; sbi2++) {
+      var sib = siblings[sbi2];
+      if (sib.holes) holes = holes.concat(sib.holes);
+      if (sib.traceObstacles) traceObs = traceObs.concat(sib.traceObstacles);
+      if (sib.padObstacles) padObs = padObs.concat(sib.padObstacles);
+    }
+
+    var clearance = parseFloat(document.getElementById('trace-clearance').value) || 0.4;
+
+    // Collect other-net zone polygons on same layer as obstacles (exclude siblings)
+    var zoneObs = [];
+    (pcbData.zones || []).forEach(function(oz) {
+      if (oz.id === z.id) return;
+      if (oz.layer !== z.layer) return;
+      if (oz.net === z.net) return; // same net = sibling, not obstacle
+      if (!oz.outlinePoints || oz.outlinePoints.length < 3) return;
+      if (!oz.bounds) return;
+      if (oz.bounds.maxX < z.bounds.minX - clearance || oz.bounds.minX > z.bounds.maxX + clearance ||
+          oz.bounds.maxY < z.bounds.minY - clearance || oz.bounds.minY > z.bounds.maxY + clearance) return;
+      // fullArea only when obstacle zone is fully contained inside current zone bounds
+      var contained = oz.bounds.minX >= z.bounds.minX && oz.bounds.maxX <= z.bounds.maxX &&
+                      oz.bounds.minY >= z.bounds.minY && oz.bounds.maxY <= z.bounds.maxY;
+      zoneObs.push({ pts: oz.outlinePoints, bounds: oz.bounds, net: oz.net, fullArea: contained });
+    });
+
+    // Merged bounds (current zone + siblings)
+    var bMinX = z.bounds.minX, bMaxX = z.bounds.maxX;
+    var bMinY = z.bounds.minY, bMaxY = z.bounds.maxY;
+    for (var sbi3 = 0; sbi3 < siblings.length; sbi3++) {
+      var sb = siblings[sbi3].bounds;
+      if (sb) {
+        if (sb.minX < bMinX) bMinX = sb.minX;
+        if (sb.maxX > bMaxX) bMaxX = sb.maxX;
+        if (sb.minY < bMinY) bMinY = sb.minY;
+        if (sb.maxY > bMaxY) bMaxY = sb.maxY;
+      }
+    }
+
+    var GRID_SIZE = parseInt(document.getElementById('grid-size').value) || 25;
+    var xStep = (bMaxX - bMinX) / GRID_SIZE;
+    var yStep = (bMaxY - bMinY) / GRID_SIZE;
+    var cells = [];
+    var minCellI = Infinity;
+
+    if (xStep > 0 && yStep > 0) {
+      for (var gy = 0; gy < GRID_SIZE; gy++) {
+        for (var gx = 0; gx < GRID_SIZE; gx++) {
+          var cx = bMinX + (gx + 0.5) * xStep;
+          var cy = bMinY + (gy + 0.5) * yStep;
+          // Check if point is inside current zone OR any sibling polygon
+          var inAny = false;
+          for (var api = 0; api < allPtsList.length && !inAny; api++) {
+            if (pointInPolygon(cx, cy, allPtsList[api])) inAny = true;
+          }
+          if (!inAny) continue;
+
+          // Check if subdivision needed (obstacle near cell)
+          var needsSub = false;
+          var checkRX = xStep * 0.6, checkRY = yStep * 0.6;
+          for (var si = 0; si < holes.length && !needsSub; si++) {
+            if (Math.abs(holes[si].x - cx) < checkRX + holes[si].diameter/2 &&
+                Math.abs(holes[si].y - cy) < checkRY + holes[si].diameter/2) needsSub = true;
+          }
+          for (var si2 = 0; si2 < traceObs.length && !needsSub; si2++) {
+            var tro = traceObs[si2];
+            var tRad = tro.width / 2 + clearance;
+            var troMinX = Math.min(tro.x1, tro.x2) - tRad;
+            var troMaxX = Math.max(tro.x1, tro.x2) + tRad;
+            var troMinY = Math.min(tro.y1, tro.y2) - tRad;
+            var troMaxY = Math.max(tro.y1, tro.y2) + tRad;
+            if (troMaxX > cx - checkRX && troMinX < cx + checkRX &&
+                troMaxY > cy - checkRY && troMinY < cy + checkRY) needsSub = true;
+          }
+          for (var si3 = 0; si3 < zoneObs.length && !needsSub; si3++) {
+            var zo = zoneObs[si3];
+            if (zo.bounds.maxX + clearance > cx - checkRX && zo.bounds.minX - clearance < cx + checkRX &&
+                zo.bounds.maxY + clearance > cy - checkRY && zo.bounds.minY - clearance < cy + checkRY) needsSub = true;
+          }
+          for (var si4 = 0; si4 < padObs.length && !needsSub; si4++) {
+            var po = padObs[si4];
+            var pw2 = po.width / 2 + clearance, ph2 = po.height / 2 + clearance;
+            if (po.x + pw2 > cx - checkRX && po.x - pw2 < cx + checkRX &&
+                po.y + ph2 > cy - checkRY && po.y - ph2 < cy + checkRY) needsSub = true;
+          }
+          var subN = needsSub ? 4 : 1;
+          var subXStep = xStep / subN;
+          var subYStep = yStep / subN;
+
+          var bestTotalEff = Infinity, bestSegEff = Infinity;
+          var bestTotalWH = 0, bestTotalHV = 0, bestSegWH = 0, bestSegHV = 0;
+          var hasValidSub = false;
+
+          for (var sy = 0; sy < subN; sy++) {
+            for (var sx = 0; sx < subN; sx++) {
+              var scx = (subN === 1) ? cx : bMinX + gx * xStep + (sx + 0.5) * subXStep;
+              var scy = (subN === 1) ? cy : bMinY + gy * yStep + (sy + 0.5) * subYStep;
+              if (subN > 1) {
+                var subInAny = false;
+                for (var api2 = 0; api2 < allPtsList.length && !subInAny; api2++) {
+                  if (pointInPolygon(scx, scy, allPtsList[api2])) subInAny = true;
+                }
+                if (!subInAny) continue;
+              }
+
+              // Use merged intersections from all same-net polygons
+              var mergedXI = getMergedXIntersections(allPtsList, scy);
+              var mergedYI = getMergedYIntersections(allPtsList, scx);
+
+              var wH = mergedLocalWidthAtY(mergedXI, scx);
+              var hV = mergedLocalHeightAtX(mergedYI, scy);
+
+              // Collect obstacles (includes pad obstacles)
+              var obsH = collectObsAtY(scy, holes, traceObs, clearance, zoneObs, padObs);
+              var obsV = collectObsAtX(scx, holes, traceObs, clearance, zoneObs, padObs);
+
+              // Total mode: subtract merged obstacle widths
+              var tWH = subtractObsFromSpan(wH, mergedXI, scx, obsH);
+              var tHV = subtractObsFromSpan(hV, mergedYI, scy, obsV);
+              var te = Math.min(tWH, tHV);
+
+              // Segment mode: find segment between obstacles
+              var sWH = segmentWithObs(mergedXI, scx, obsH);
+              var sHV = segmentWithObs(mergedYI, scy, obsV);
+              var se = Math.min(sWH, sHV);
+
+              hasValidSub = true;
+              if (te > 0 && te < bestTotalEff) { bestTotalEff = te; bestTotalWH = tWH; bestTotalHV = tHV; }
+              if (se > 0 && se < bestSegEff) { bestSegEff = se; bestSegWH = sWH; bestSegHV = sHV; }
+            }
+          }
+          if (!hasValidSub) continue;
+          if (bestTotalEff === Infinity) bestTotalEff = 0;
+          if (bestSegEff === Infinity) bestSegEff = 0;
+
+          var useSegment = calcMode === 'segment';
+          var effWidth = useSegment ? bestSegEff : bestTotalEff;
+          // Filter out sub-clearance width artifacts near obstacle boundaries
+          var minEffW = clearance * 2;
+          if (effWidth < minEffW) continue;
+          var iMax = CurrentCalc.calcMaxCurrent(effWidth, cuThick, deltaT, isInternal);
+          var totalIMax = bestTotalEff > 0 ? CurrentCalc.calcMaxCurrent(bestTotalEff, cuThick, deltaT, isInternal) : 0;
+          var segIMax = bestSegEff > 0 ? CurrentCalc.calcMaxCurrent(bestSegEff, cuThick, deltaT, isInternal) : 0;
+          cells.push({
+            x0: bMinX + gx * xStep, y0: bMinY + gy * yStep,
+            x1: bMinX + (gx + 1) * xStep, y1: bMinY + (gy + 1) * yStep,
+            gx: gx, gy: gy,
+            widthH: bestTotalWH, heightV: bestTotalHV, effWidth: bestTotalEff, iMax: totalIMax,
+            segWidthH: bestSegWH, segHeightV: bestSegHV, segEff: bestSegEff, segIMax: segIMax
+          });
+          if (iMax < minCellI) minCellI = iMax;
+        }
+      }
+    }
+
+    zoneGrids[z.id] = { cells: cells, pts: pts, holes: holes, traceObs: traceObs, padObs: padObs, zoneObs: zoneObs, allPtsList: allPtsList, clearance: clearance, xStep: xStep, yStep: yStep, bMinX: bMinX, bMinY: bMinY, gridSize: GRID_SIZE };
+    currentMap[z.id] = minCellI === Infinity ? 0 : minCellI;
+  });
+
+  // ── Capsule range functions (trace obstacle cross-section at scan line) ──
+  function capsuleXRangeAtY(x1, y1, x2, y2, r, scanY) {
+    var dx = x2 - x1, dy = y2 - y1;
+    var L2 = dx*dx + dy*dy;
+    var xMin = Infinity, xMax = -Infinity;
+    function chk(t) {
+      if (t < 0 || t > 1) return;
+      var cx = x1 + t * dx, cy = y1 + t * dy;
+      var dv = scanY - cy;
+      if (dv*dv >= r*r) return;
+      var hx = Math.sqrt(r*r - dv*dv);
+      if (cx - hx < xMin) xMin = cx - hx;
+      if (cx + hx > xMax) xMax = cx + hx;
+    }
+    chk(0); chk(1);
+    if (L2 > 1e-12) {
+      var L = Math.sqrt(L2);
+      if (Math.abs(dy) > 1e-10) {
+        chk((scanY - y1) / dy);
+        chk((scanY - y1 + dx*r/L) / dy);
+        chk((scanY - y1 - dx*r/L) / dy);
+      }
+    }
+    return xMin <= xMax ? [xMin, xMax] : null;
+  }
+
+  function capsuleYRangeAtX(x1, y1, x2, y2, r, scanX) {
+    var dx = x2 - x1, dy = y2 - y1;
+    var L2 = dx*dx + dy*dy;
+    var yMin = Infinity, yMax = -Infinity;
+    function chk(t) {
+      if (t < 0 || t > 1) return;
+      var cx = x1 + t * dx, cy = y1 + t * dy;
+      var dh = scanX - cx;
+      if (dh*dh >= r*r) return;
+      var hy = Math.sqrt(r*r - dh*dh);
+      if (cy - hy < yMin) yMin = cy - hy;
+      if (cy + hy > yMax) yMax = cy + hy;
+    }
+    chk(0); chk(1);
+    if (L2 > 1e-12) {
+      var L = Math.sqrt(L2);
+      if (Math.abs(dx) > 1e-10) {
+        chk((scanX - x1) / dx);
+        chk((scanX - x1 + dy*r/L) / dx);
+        chk((scanX - x1 - dy*r/L) / dx);
+      }
+    }
+    return yMin <= yMax ? [yMin, yMax] : null;
+  }
+
+  // ── Obstacle collection ──
+  function collectObsAtY(scanY, holes, traceObs, clr, zoneObs, padObs) {
+    var obs = [];
+    for (var i = 0; i < holes.length; i++) {
+      var h = holes[i], r = h.diameter / 2;
+      var dy = Math.abs(h.y - scanY);
+      if (dy >= r) continue;
+      var hx = Math.sqrt(r*r - dy*dy);
+      obs.push({ l: h.x - hx, r: h.x + hx });
+    }
+    for (var i = 0; i < traceObs.length; i++) {
+      var tr = traceObs[i];
+      var tRad = tr.width / 2 + clr;
+      var range = capsuleXRangeAtY(tr.x1, tr.y1, tr.x2, tr.y2, tRad, scanY);
+      if (range) obs.push({ l: range[0], r: range[1] });
+    }
+    // Pad obstacles: rectangular SMD pads expanded by clearance
+    if (padObs) {
+      for (var pi = 0; pi < padObs.length; pi++) {
+        var po = padObs[pi];
+        var ph2 = po.height / 2 + clr;
+        if (Math.abs(po.y - scanY) >= ph2) continue;
+        var pw2 = po.width / 2 + clr;
+        obs.push({ l: po.x - pw2, r: po.x + pw2 });
+      }
+    }
+    // Zone obstacles: other-net zones
+    if (zoneObs) {
+      for (var zi = 0; zi < zoneObs.length; zi++) {
+        var zo = zoneObs[zi];
+        if (scanY < zo.bounds.minY - clr || scanY > zo.bounds.maxY + clr) continue;
+        var xRanges = zo.fullArea
+          ? getZoneObsXRanges(zo.pts, scanY, clr)
+          : getZoneEdgeObsXRanges(zo.pts, scanY, clr);
+        for (var ri = 0; ri < xRanges.length; ri++) {
+          obs.push({ l: xRanges[ri].l, r: xRanges[ri].r });
+        }
+      }
+    }
+    return obs;
+  }
+
+  function collectObsAtX(scanX, holes, traceObs, clr, zoneObs, padObs) {
+    var obs = [];
+    for (var i = 0; i < holes.length; i++) {
+      var h = holes[i], r = h.diameter / 2;
+      var dx = Math.abs(h.x - scanX);
+      if (dx >= r) continue;
+      var hy = Math.sqrt(r*r - dx*dx);
+      obs.push({ l: h.y - hy, r: h.y + hy });
+    }
+    for (var i = 0; i < traceObs.length; i++) {
+      var tr = traceObs[i];
+      var tRad = tr.width / 2 + clr;
+      var range = capsuleYRangeAtX(tr.x1, tr.y1, tr.x2, tr.y2, tRad, scanX);
+      if (range) obs.push({ l: range[0], r: range[1] });
+    }
+    // Pad obstacles: rectangular SMD pads expanded by clearance
+    if (padObs) {
+      for (var pi = 0; pi < padObs.length; pi++) {
+        var po = padObs[pi];
+        var pw2 = po.width / 2 + clr;
+        if (Math.abs(po.x - scanX) >= pw2) continue;
+        var ph2 = po.height / 2 + clr;
+        obs.push({ l: po.y - ph2, r: po.y + ph2 });
+      }
+    }
+    // Zone obstacles: other-net zones
+    if (zoneObs) {
+      for (var zi = 0; zi < zoneObs.length; zi++) {
+        var zo = zoneObs[zi];
+        if (scanX < zo.bounds.minX - clr || scanX > zo.bounds.maxX + clr) continue;
+        var yRanges = zo.fullArea
+          ? getZoneObsYRanges(zo.pts, scanX, clr)
+          : getZoneEdgeObsYRanges(zo.pts, scanX, clr);
+        for (var ri = 0; ri < yRanges.length; ri++) {
+          obs.push({ l: yRanges[ri].l, r: yRanges[ri].r });
+        }
+      }
+    }
+    return obs;
+  }
+
+  // Zone obstacle scan-line helpers
+  // fullArea mode: smaller zone blocks entire span + clearance (used when obstacle zone is smaller)
+  function getZoneObsXRanges(pts, scanY, clr) {
+    var ranges = [];
+    var offsets = [-clr, 0, clr];
+    for (var oi = 0; oi < offsets.length; oi++) {
+      var y = scanY + offsets[oi];
+      var xs = getXIntersections(pts, y);
+      for (var i = 0; i + 1 < xs.length; i += 2) {
+        ranges.push({ l: xs[i] - clr, r: xs[i + 1] + clr });
+      }
+    }
+    ranges.sort(function(a, b) { return a.l - b.l; });
+    var merged = [];
+    for (var i = 0; i < ranges.length; i++) {
+      if (merged.length > 0 && ranges[i].l <= merged[merged.length - 1].r) {
+        merged[merged.length - 1].r = Math.max(merged[merged.length - 1].r, ranges[i].r);
+      } else { merged.push({ l: ranges[i].l, r: ranges[i].r }); }
+    }
+    return merged;
+  }
+
+  function getZoneObsYRanges(pts, scanX, clr) {
+    var ranges = [];
+    var offsets = [-clr, 0, clr];
+    for (var oi = 0; oi < offsets.length; oi++) {
+      var x = scanX + offsets[oi];
+      var ys = getYIntersections(pts, x);
+      for (var i = 0; i + 1 < ys.length; i += 2) {
+        ranges.push({ l: ys[i] - clr, r: ys[i + 1] + clr });
+      }
+    }
+    ranges.sort(function(a, b) { return a.l - b.l; });
+    var merged = [];
+    for (var i = 0; i < ranges.length; i++) {
+      if (merged.length > 0 && ranges[i].l <= merged[merged.length - 1].r) {
+        merged[merged.length - 1].r = Math.max(merged[merged.length - 1].r, ranges[i].r);
+      } else { merged.push({ l: ranges[i].l, r: ranges[i].r }); }
+    }
+    return merged;
+  }
+
+  // edgeOnly mode: larger zone only creates clearance bands at its boundary edges
+  function getZoneEdgeObsXRanges(pts, scanY, clr) {
+    var xs = getXIntersections(pts, scanY);
+    var ranges = [];
+    for (var i = 0; i < xs.length; i++) {
+      ranges.push({ l: xs[i] - clr, r: xs[i] + clr });
+    }
+    ranges.sort(function(a, b) { return a.l - b.l; });
+    var merged = [];
+    for (var i = 0; i < ranges.length; i++) {
+      if (merged.length > 0 && ranges[i].l <= merged[merged.length - 1].r) {
+        merged[merged.length - 1].r = Math.max(merged[merged.length - 1].r, ranges[i].r);
+      } else { merged.push({ l: ranges[i].l, r: ranges[i].r }); }
+    }
+    return merged;
+  }
+
+  function getZoneEdgeObsYRanges(pts, scanX, clr) {
+    var ys = getYIntersections(pts, scanX);
+    var ranges = [];
+    for (var i = 0; i < ys.length; i++) {
+      ranges.push({ l: ys[i] - clr, r: ys[i] + clr });
+    }
+    ranges.sort(function(a, b) { return a.l - b.l; });
+    var merged = [];
+    for (var i = 0; i < ranges.length; i++) {
+      if (merged.length > 0 && ranges[i].l <= merged[merged.length - 1].r) {
+        merged[merged.length - 1].r = Math.max(merged[merged.length - 1].r, ranges[i].r);
+      } else { merged.push({ l: ranges[i].l, r: ranges[i].r }); }
+    }
+    return merged;
+  }
+
+  // ── Merged intersection helpers (union of multiple polygon scanlines) ──
+  function getMergedXIntersections(allPtsList, y) {
+    var spans = [];
+    for (var p = 0; p < allPtsList.length; p++) {
+      var xs = getXIntersections(allPtsList[p], y);
+      for (var i = 0; i + 1 < xs.length; i += 2) {
+        spans.push({ l: xs[i], r: xs[i + 1] });
+      }
+    }
+    spans.sort(function(a, b) { return a.l - b.l; });
+    var merged = [];
+    for (var i = 0; i < spans.length; i++) {
+      if (merged.length > 0 && spans[i].l <= merged[merged.length - 1]) {
+        merged[merged.length - 1] = Math.max(merged[merged.length - 1], spans[i].r);
+      } else {
+        merged.push(spans[i].l, spans[i].r);
+      }
+    }
+    return merged; // flat array: [enter, exit, enter, exit, ...]
+  }
+
+  function getMergedYIntersections(allPtsList, x) {
+    var spans = [];
+    for (var p = 0; p < allPtsList.length; p++) {
+      var ys = getYIntersections(allPtsList[p], x);
+      for (var i = 0; i + 1 < ys.length; i += 2) {
+        spans.push({ l: ys[i], r: ys[i + 1] });
+      }
+    }
+    spans.sort(function(a, b) { return a.l - b.l; });
+    var merged = [];
+    for (var i = 0; i < spans.length; i++) {
+      if (merged.length > 0 && spans[i].l <= merged[merged.length - 1]) {
+        merged[merged.length - 1] = Math.max(merged[merged.length - 1], spans[i].r);
+      } else {
+        merged.push(spans[i].l, spans[i].r);
+      }
+    }
+    return merged;
+  }
+
+  function mergedLocalWidthAtY(mergedXI, px) {
+    for (var i = 0; i + 1 < mergedXI.length; i += 2) {
+      if (px >= mergedXI[i] && px <= mergedXI[i + 1]) return mergedXI[i + 1] - mergedXI[i];
+    }
+    return 0;
+  }
+
+  function mergedLocalHeightAtX(mergedYI, py) {
+    for (var i = 0; i + 1 < mergedYI.length; i += 2) {
+      if (py >= mergedYI[i] && py <= mergedYI[i + 1]) return mergedYI[i + 1] - mergedYI[i];
+    }
+    return 0;
+  }
+
+  // ── Subtract merged obstacles from total span ──
+  function subtractObsFromSpan(spanWidth, intersections, pt, obs) {
+    var segL = null, segR = null;
+    for (var i = 0; i + 1 < intersections.length; i += 2) {
+      if (pt >= intersections[i] && pt <= intersections[i + 1]) { segL = intersections[i]; segR = intersections[i + 1]; break; }
+    }
+    if (segL === null) return 0;
+    var spanObs = [];
+    for (var i = 0; i < obs.length; i++) {
+      if (obs[i].r <= segL || obs[i].l >= segR) continue;
+      spanObs.push({ l: Math.max(obs[i].l, segL), r: Math.min(obs[i].r, segR) });
+    }
+    spanObs.sort(function(a, b) { return a.l - b.l; });
+    var merged = [];
+    for (var i = 0; i < spanObs.length; i++) {
+      if (merged.length > 0 && spanObs[i].l <= merged[merged.length - 1].r) {
+        merged[merged.length - 1].r = Math.max(merged[merged.length - 1].r, spanObs[i].r);
+      } else { merged.push({ l: spanObs[i].l, r: spanObs[i].r }); }
+    }
+    var totalObs = 0;
+    for (var i = 0; i < merged.length; i++) totalObs += (merged[i].r - merged[i].l);
+    return Math.max(0, spanWidth - totalObs);
+  }
+
+  // ── Segment width between obstacles ──
+  function segmentWithObs(intersections, pt, obs) {
+    var segL = null, segR = null;
+    for (var i = 0; i + 1 < intersections.length; i += 2) {
+      if (pt >= intersections[i] && pt <= intersections[i + 1]) { segL = intersections[i]; segR = intersections[i + 1]; break; }
+    }
+    if (segL === null) return 0;
+    var spanObs = [];
+    for (var i = 0; i < obs.length; i++) {
+      if (obs[i].r <= segL || obs[i].l >= segR) continue;
+      spanObs.push({ l: Math.max(obs[i].l, segL), r: Math.min(obs[i].r, segR) });
+    }
+    spanObs.sort(function(a, b) { return a.l - b.l; });
+    var merged = [];
+    for (var i = 0; i < spanObs.length; i++) {
+      if (merged.length > 0 && spanObs[i].l <= merged[merged.length - 1].r) {
+        merged[merged.length - 1].r = Math.max(merged[merged.length - 1].r, spanObs[i].r);
+      } else { merged.push({ l: spanObs[i].l, r: spanObs[i].r }); }
+    }
+    var prev = segL;
+    for (var mi = 0; mi < merged.length; mi++) {
+      if (pt >= prev && pt <= merged[mi].l) return merged[mi].l - prev;
+      prev = merged[mi].r;
+    }
+    if (pt >= prev && pt <= segR) return segR - prev;
+    return 0;
+  }
+
+  // ── Polygon scan-line helpers ──
+  function getXIntersections(pts, y) {
+    var xs = [];
+    for (var i = 0; i < pts.length; i++) {
+      var j = (i + 1) % pts.length;
+      var yi = pts[i].y, yj = pts[j].y;
+      if ((yi <= y && yj > y) || (yj <= y && yi > y)) {
+        var t = (y - yi) / (yj - yi);
+        xs.push(pts[i].x + t * (pts[j].x - pts[i].x));
+      }
+    }
+    xs.sort(function(a, b) { return a - b; });
+    return xs;
+  }
+
+  function getYIntersections(pts, x) {
+    var ys = [];
+    for (var i = 0; i < pts.length; i++) {
+      var j = (i + 1) % pts.length;
+      var xi = pts[i].x, xj = pts[j].x;
+      if ((xi <= x && xj > x) || (xj <= x && xi > x)) {
+        var t = (x - xi) / (xj - xi);
+        ys.push(pts[i].y + t * (pts[j].y - pts[i].y));
+      }
+    }
+    ys.sort(function(a, b) { return a - b; });
+    return ys;
+  }
+
+  function measurePolygonWidthAtY(pts, y) {
+    var xs = getXIntersections(pts, y);
+    var totalW = 0;
+    for (var i = 0; i + 1 < xs.length; i += 2) {
+      totalW += xs[i + 1] - xs[i];
+    }
+    return totalW;
+  }
+
+  function measurePolygonHeightAtX(pts, x) {
+    var ys = getYIntersections(pts, x);
+    var totalH = 0;
+    for (var i = 0; i + 1 < ys.length; i += 2) {
+      totalH += ys[i + 1] - ys[i];
+    }
+    return totalH;
+  }
+
+  // Local measurement: only the segment containing the point
+  function measureLocalWidthAtY(pts, y, px) {
+    var xs = getXIntersections(pts, y);
+    for (var i = 0; i + 1 < xs.length; i += 2) {
+      if (px >= xs[i] && px <= xs[i + 1]) {
+        return xs[i + 1] - xs[i];
+      }
+    }
+    return 0;
+  }
+
+  function measureLocalHeightAtX(pts, x, py) {
+    var ys = getYIntersections(pts, x);
+    for (var i = 0; i + 1 < ys.length; i += 2) {
+      if (py >= ys[i] && py <= ys[i + 1]) {
+        return ys[i + 1] - ys[i];
+      }
+    }
+    return 0;
+  }
+
+  // Compute dynamic max current from all traces + zone cells
+  var maxI = 0;
+  var useSegForMax = document.getElementById('calc-mode').value === 'segment';
+  var ids = Object.keys(currentMap);
+  for (var i = 0; i < ids.length; i++) {
+    if (currentMap[ids[i]] > maxI) maxI = currentMap[ids[i]];
+  }
+  // Also scan all zone cells for the actual max in current mode
+  var zonesEnabled = document.getElementById('chk-zones').checked;
+  if (zonesEnabled) {
+    var zoneIds = Object.keys(zoneGrids);
+    for (var zi = 0; zi < zoneIds.length; zi++) {
+      var zgCells = zoneGrids[zoneIds[zi]].cells;
+      for (var ci = 0; ci < zgCells.length; ci++) {
+        var cv = useSegForMax ? zgCells[ci].segIMax : zgCells[ci].iMax;
+        if (cv > maxI) maxI = cv;
+      }
+    }
+  }
+  globalMaxI = maxI > 0 ? maxI : 10;
+  updateLegendLabels();
+  // Update Max I textbox with actual max current
+  var maxInput = document.getElementById('max-current');
+  if (maxInput && (!maxInput.value || parseFloat(maxInput.value) === 0)) {
+    maxInput.placeholder = globalMaxI.toFixed(1) + 'A';
+  }
+}
+
+// ═══════════════════════════════════════
+// Color mapping
+// ═══════════════════════════════════════
+function iToColor(iMax) {
+  if (iMax === null || iMax === undefined || isNaN(iMax) || iMax <= 0) return 'rgba(128,128,128,0.4)';
+  // Normalize with sqrt for better spread of mid-range values
+  var t = Math.sqrt(Math.max(0, Math.min(1, iMax / globalMaxI)));
+  // 16-stop RGB colormap for maximum color differentiation
+  var stops = [
+    [0.000,  60,   0,  20],
+    [0.067, 120,   5,  15],
+    [0.133, 175,  15,  15],
+    [0.200, 210,  50,  10],
+    [0.267, 230, 100,  10],
+    [0.333, 245, 150,  15],
+    [0.400, 250, 200,  30],
+    [0.467, 240, 235,  60],
+    [0.533, 200, 245,  80],
+    [0.600, 140, 225,  65],
+    [0.667,  80, 200,  70],
+    [0.733,  40, 180, 100],
+    [0.800,  20, 170, 150],
+    [0.867,  20, 160, 200],
+    [0.933,  40, 130, 220],
+    [1.000,  80, 140, 250]
+  ];
+  var i = 0;
+  for (i = 0; i < stops.length - 2; i++) { if (t <= stops[i + 1][0]) break; }
+  var s0 = stops[i], s1 = stops[i + 1];
+  var lt = s1[0] > s0[0] ? (t - s0[0]) / (s1[0] - s0[0]) : 0;
+  lt = Math.max(0, Math.min(1, lt));
+  var r = Math.round(s0[1] + (s1[1] - s0[1]) * lt);
+  var g = Math.round(s0[2] + (s1[2] - s0[2]) * lt);
+  var b = Math.round(s0[3] + (s1[3] - s0[3]) * lt);
+  return 'rgb(' + r + ',' + g + ',' + b + ')';
+}
+
+// ═══════════════════════════════════════
+// Coordinate transforms
+// ═══════════════════════════════════════
+function worldToScreen(wx, wy) {
+  var ch = canvas.height / (window.devicePixelRatio || 1);
+  return { x: (wx - viewX) * viewScale, y: ch - (wy - viewY) * viewScale };
+}
+function screenToWorld(sx, sy) {
+  var ch = canvas.height / (window.devicePixelRatio || 1);
+  return { x: sx / viewScale + viewX, y: (ch - sy) / viewScale + viewY };
+}
+
+function fitView() {
+  if (!pcbData) return;
+  var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  function expand(x, y) {
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+  }
+  (pcbData.lines || []).forEach(function(l) { if (isCopperLayer(l.layer)) { expand(l.startX, l.startY); expand(l.endX, l.endY); } });
+  (pcbData.arcs || []).forEach(function(a) {
+    if (isCopperLayer(a.layer)) {
+      if (a.arcSegments && a.arcSegments.length > 0) {
+        a.arcSegments.forEach(function(s) { expand(s.x1, s.y1); expand(s.x2, s.y2); });
+      } else {
+        expand(a.startX, a.startY); expand(a.endX, a.endY);
+      }
+    }
+  });
+  (pcbData.zones || []).forEach(function(z) { if (isCopperLayer(z.layer) && z.bounds) { expand(z.bounds.minX, z.bounds.minY); expand(z.bounds.maxX, z.bounds.maxY); } });
+  (pcbData.vias || []).forEach(function(v) { expand(v.x, v.y); });
+  if (pcbData.boardOutline) {
+    pcbData.boardOutline.forEach(function(p) { expand(p.x, p.y); });
+  }
+  if (minX === Infinity) return;
+
+  var pad = 2;
+  minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+  var w = maxX - minX, h = maxY - minY;
+  var rect = canvas.getBoundingClientRect();
+  var cw = rect.width, ch = rect.height;
+  viewScale = Math.min(cw / w, ch / h) * 0.92;
+  viewX = minX - (cw / viewScale - w) / 2;
+  viewY = minY - (ch / viewScale - h) / 2;
+}
+
+// ═══════════════════════════════════════
+// Drawing
+// ═══════════════════════════════════════
+function draw() {
+  if (!ctx || !pcbData) return;
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, rect.width, rect.height);
+
+  var layerFilter = document.getElementById('viz-layer-filter').value;
+  var showVias = document.getElementById('chk-vias').checked;
+  var showZones = document.getElementById('chk-zones').checked;
+  var showOutline = document.getElementById('chk-outline').checked;
+  var minCurrent = parseFloat(document.getElementById('min-current').value) || 0;
+  var maxCurrent = parseFloat(document.getElementById('max-current').value) || 0;
+
+  // Draw board outline background
+  var boardPts = pcbData.boardOutline;
+  if (showOutline && boardPts && boardPts.length >= 3) {
+    ctx.beginPath();
+    var bp0 = worldToScreen(boardPts[0].x, boardPts[0].y);
+    ctx.moveTo(bp0.x, bp0.y);
+    for (var bpi = 1; bpi < boardPts.length; bpi++) {
+      var bpp = worldToScreen(boardPts[bpi].x, boardPts[bpi].y);
+      ctx.lineTo(bpp.x, bpp.y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(20,30,50,0.6)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  // Highlight colors
+  var hlColorA = '#ff6b6b';
+  var hlColorB = '#4dabf7';
+  var useSegment = document.getElementById('calc-mode').value === 'segment';
+
+  // Two-pass rendering when a net is selected
+  var passes = selectedNet ? [false, true] : [null];
+
+  // Helper: draw a single zone
+  function drawZone(z) {
+    if (!isCopperLayer(z.layer)) return;
+    if (!z.bounds) return;
+    if (layerFilter !== '__all__' && String(z.layer) !== layerFilter) return;
+
+    var isSelected = selectedNet && z.net === selectedNet;
+    var zg = zoneGrids[z.id];
+
+    if (zg && zg.cells.length > 0) {
+      var alpha = selectedNet && !isSelected ? 0.1 : 0.55;
+      ctx.globalAlpha = alpha;
+      zg.cells.forEach(function(cell) {
+        var cellCurrent = useSegment ? cell.segIMax : cell.iMax;
+        if (minCurrent > 0 && cellCurrent < minCurrent) return;
+        if (maxCurrent > 0 && cellCurrent > maxCurrent) return;
+        var color;
+        if (selectedNet && !isSelected) {
+          color = 'rgba(80,80,80,0.12)';
+        } else {
+          color = iToColor(cellCurrent);
+        }
+        var pTL = worldToScreen(cell.x0, cell.y0);
+        var pBR = worldToScreen(cell.x1, cell.y1);
+        var rx = Math.min(pTL.x, pBR.x);
+        var ry = Math.min(pTL.y, pBR.y);
+        var rw = Math.abs(pBR.x - pTL.x);
+        var rh = Math.abs(pBR.y - pTL.y);
+        ctx.fillStyle = color;
+        ctx.fillRect(rx - 0.5, ry - 0.5, Math.max(rw + 1, 1), Math.max(rh + 1, 1));
+      });
+      ctx.globalAlpha = 1.0;
+
+      var pts = zg.pts;
+      if (pts && pts.length >= 3) {
+        var borderColor = selectedNet && !isSelected ? 'rgba(80,80,80,0.3)' : 'rgba(255,255,255,0.3)';
+        ctx.beginPath();
+        var p0 = worldToScreen(pts[0].x, pts[0].y);
+        ctx.moveTo(p0.x, p0.y);
+        for (var pi = 1; pi < pts.length; pi++) {
+          var pp = worldToScreen(pts[pi].x, pts[pi].y);
+          ctx.lineTo(pp.x, pp.y);
+        }
+        ctx.closePath();
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+
+      // Draw holes (vias/pads with different net)
+      if (zg.holes && zg.holes.length > 0 && !(selectedNet && !isSelected)) {
+        zg.holes.forEach(function(h) {
+          var hp = worldToScreen(h.x, h.y);
+          var hr = Math.max(1.5, (h.diameter / 2) * viewScale);
+          ctx.beginPath();
+          ctx.arc(hp.x, hp.y, hr, 0, Math.PI * 2);
+          ctx.fillStyle = '#111';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(255,100,100,0.6)';
+          ctx.lineWidth = 0.8;
+          ctx.stroke();
+        });
+      }
+
+      // Draw trace obstacles (clearance zones around other-net traces)
+      if (zg.traceObs && zg.traceObs.length > 0 && !(selectedNet && !isSelected)) {
+        var clr = zg.clearance || 0.4;
+        zg.traceObs.forEach(function(tr) {
+          var tRad = tr.width / 2 + clr;
+          var p1 = worldToScreen(tr.x1, tr.y1);
+          var p2 = worldToScreen(tr.x2, tr.y2);
+          var rPx = Math.max(1, tRad * viewScale);
+          // Draw capsule outline
+          var dx = p2.x - p1.x, dy = p2.y - p1.y;
+          var len = Math.sqrt(dx*dx + dy*dy);
+          if (len < 0.5) {
+            ctx.beginPath();
+            ctx.arc(p1.x, p1.y, rPx, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(17,17,17,0.7)';
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255,180,60,0.6)';
+            ctx.lineWidth = 0.8;
+            ctx.stroke();
+          } else {
+            ctx.save();
+            ctx.lineCap = 'round';
+            ctx.lineWidth = rPx * 2;
+            ctx.strokeStyle = 'rgba(17,17,17,0.7)';
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+            ctx.lineWidth = rPx * 2;
+            ctx.strokeStyle = 'rgba(255,180,60,0.25)';
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+            ctx.restore();
+          }
+        });
+      }
+
+      // Draw zone obstacles (clearance zones around other-net zones)
+      if (zg.zoneObs && zg.zoneObs.length > 0 && !(selectedNet && !isSelected)) {
+        var clr = zg.clearance || 0.4;
+        ctx.save();
+        zg.zoneObs.forEach(function(zo) {
+          var zoPts = zo.pts;
+          if (!zoPts || zoPts.length < 3) return;
+          ctx.beginPath();
+          for (var pi = 0; pi < zoPts.length; pi++) {
+            var sp = worldToScreen(zoPts[pi].x, zoPts[pi].y);
+            if (pi === 0) ctx.moveTo(sp.x, sp.y);
+            else ctx.lineTo(sp.x, sp.y);
+          }
+          ctx.closePath();
+          if (zo.fullArea) {
+            // fullArea: dark fill + solid purple border (entire polygon blocked)
+            ctx.fillStyle = 'rgba(17,17,17,0.5)';
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255,100,255,0.6)';
+            ctx.lineWidth = Math.max(1, clr * viewScale * 2);
+            ctx.stroke();
+          } else {
+            // edge-only: thin dashed purple outline (only edges create clearance)
+            ctx.setLineDash([4, 4]);
+            ctx.strokeStyle = 'rgba(255,100,255,0.35)';
+            ctx.lineWidth = Math.max(1, clr * viewScale);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+        });
+        ctx.restore();
+      }
+
+      // Draw pad obstacles (clearance zones around other-net SMD pads)
+      if (zg.padObs && zg.padObs.length > 0 && !(selectedNet && !isSelected)) {
+        var clr = zg.clearance || 0.4;
+        zg.padObs.forEach(function(po) {
+          // Outer rectangle: pad + clearance (semi-transparent)
+          var ow2 = po.width / 2 + clr, oh2 = po.height / 2 + clr;
+          var oTL = worldToScreen(po.x - ow2, po.y - oh2);
+          var oBR = worldToScreen(po.x + ow2, po.y + oh2);
+          var ox = Math.min(oTL.x, oBR.x), oy = Math.min(oTL.y, oBR.y);
+          var ow = Math.abs(oBR.x - oTL.x), oh = Math.abs(oBR.y - oTL.y);
+          ctx.fillStyle = 'rgba(17,17,17,0.35)';
+          ctx.fillRect(ox, oy, ow, oh);
+          ctx.strokeStyle = 'rgba(60,200,255,0.3)';
+          ctx.lineWidth = 0.6;
+          ctx.setLineDash([3, 3]);
+          ctx.strokeRect(ox, oy, ow, oh);
+          ctx.setLineDash([]);
+          // Inner rectangle: actual pad footprint
+          var iw2 = po.width / 2, ih2 = po.height / 2;
+          var iTL = worldToScreen(po.x - iw2, po.y - ih2);
+          var iBR = worldToScreen(po.x + iw2, po.y + ih2);
+          var ix = Math.min(iTL.x, iBR.x), iy = Math.min(iTL.y, iBR.y);
+          var iw = Math.abs(iBR.x - iTL.x), ih = Math.abs(iBR.y - iTL.y);
+          ctx.fillStyle = 'rgba(60,200,255,0.5)';
+          ctx.fillRect(ix, iy, iw, ih);
+          ctx.strokeStyle = 'rgba(60,200,255,0.8)';
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(ix, iy, iw, ih);
+        });
+      }
+    } else {
+      var iMax = currentMap[z.id];
+      if (minCurrent > 0 && (iMax === undefined || iMax < minCurrent)) return;
+      if (maxCurrent > 0 && iMax !== undefined && iMax > maxCurrent) return;
+      var color = selectedNet && !isSelected ? 'rgba(80,80,80,0.12)' : iToColor(iMax);
+      var alpha = selectedNet && !isSelected ? 0.1 : 0.3;
+      ctx.globalAlpha = alpha;
+      var pMin = worldToScreen(z.bounds.minX, z.bounds.minY);
+      var pMax = worldToScreen(z.bounds.maxX, z.bounds.maxY);
+      ctx.fillStyle = color;
+      var rx = Math.min(pMin.x, pMax.x), ry = Math.min(pMin.y, pMax.y);
+      ctx.fillRect(rx, ry, Math.abs(pMax.x - pMin.x), Math.abs(pMax.y - pMin.y));
+      ctx.globalAlpha = 1.0;
+      ctx.strokeStyle = color; ctx.lineWidth = 1;
+      ctx.strokeRect(rx, ry, Math.abs(pMax.x - pMin.x), Math.abs(pMax.y - pMin.y));
+    }
+  }
+
+  // Helper: draw traces for a given highlight pass
+  function drawTraces(isHighlightPass) {
+    (pcbData.lines || []).forEach(function(l) {
+      if (!isCopperLayer(l.layer)) return;
+      if (layerFilter !== '__all__' && String(l.layer) !== layerFilter) return;
+      var iMax = currentMap[l.id];
+      if (minCurrent > 0 && (iMax === undefined || iMax < minCurrent)) return;
+      if (maxCurrent > 0 && iMax !== undefined && iMax > maxCurrent) return;
+
+      var isSelected = selectedNet && l.net === selectedNet;
+      if (isHighlightPass === false && isSelected) return;
+      if (isHighlightPass === true && !isSelected) return;
+
+      var color;
+      if (selectedNet && !isSelected) {
+        color = 'rgba(80,80,80,0.25)';
+      } else {
+        color = iToColor(iMax);
+      }
+
+      var p1 = worldToScreen(l.startX, l.startY);
+      var p2 = worldToScreen(l.endX, l.endY);
+      var w = Math.max(1, l.width * viewScale);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = w;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+    });
+
+    (pcbData.arcs || []).forEach(function(a) {
+      if (!isCopperLayer(a.layer)) return;
+      if (layerFilter !== '__all__' && String(a.layer) !== layerFilter) return;
+      var iMax = currentMap[a.id];
+      if (minCurrent > 0 && (iMax === undefined || iMax < minCurrent)) return;
+      if (maxCurrent > 0 && iMax !== undefined && iMax > maxCurrent) return;
+
+      var isSelected = selectedNet && a.net === selectedNet;
+      if (isHighlightPass === false && isSelected) return;
+      if (isHighlightPass === true && !isSelected) return;
+
+      var color;
+      if (selectedNet && !isSelected) {
+        color = 'rgba(80,80,80,0.25)';
+      } else {
+        color = iToColor(iMax);
+      }
+
+      var w = Math.max(1, a.width * viewScale);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = w;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      if (a.arcSegments && a.arcSegments.length > 0) {
+        var sp = worldToScreen(a.arcSegments[0].x1, a.arcSegments[0].y1);
+        ctx.moveTo(sp.x, sp.y);
+        for (var asi = 0; asi < a.arcSegments.length; asi++) {
+          var ep = worldToScreen(a.arcSegments[asi].x2, a.arcSegments[asi].y2);
+          ctx.lineTo(ep.x, ep.y);
+        }
+      } else {
+        var p1 = worldToScreen(a.startX, a.startY);
+        var p2 = worldToScreen(a.endX, a.endY);
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+      }
+      ctx.stroke();
+    });
+  }
+
+  // Draw order when net selected: non-selected zones → non-selected traces → selected zones → selected traces
+  // When no net selected: zones → traces (single pass)
+  if (showZones && pcbData.zones) {
+    if (selectedNet) {
+      // Pass 1: non-selected zones
+      pcbData.zones.forEach(function(z) {
+        if (!(selectedNet && z.net === selectedNet)) drawZone(z);
+      });
+    } else {
+      pcbData.zones.forEach(drawZone);
+    }
+  }
+
+  if (selectedNet) {
+    // Non-selected traces
+    drawTraces(false);
+    // Selected zones on top of non-selected items
+    if (showZones && pcbData.zones) {
+      pcbData.zones.forEach(function(z) {
+        if (selectedNet && z.net === selectedNet) drawZone(z);
+      });
+    }
+    // Selected traces on top of everything
+    drawTraces(true);
+  } else {
+    drawTraces(null);
+  }
+
+  // Draw vias
+  if (showVias && pcbData.vias) {
+    pcbData.vias.forEach(function(v) {
+      var pp = worldToScreen(v.x, v.y);
+      var r = Math.max(2, (v.diameter / 2) * viewScale);
+      var hr = Math.max(1, (v.holeDiameter / 2) * viewScale);
+
+      var viaAlpha = selectedNet ? (v.net === selectedNet ? 0.9 : 0.15) : 0.7;
+      ctx.beginPath();
+      ctx.arc(pp.x, pp.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(156,39,176,' + viaAlpha + ')';
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(pp.x, pp.y, hr, 0, Math.PI * 2);
+      ctx.fillStyle = '#111';
+      ctx.fill();
+    });
+  }
+
+  // Draw board outline border on top
+  if (showOutline && boardPts && boardPts.length >= 3) {
+    ctx.beginPath();
+    var bo0 = worldToScreen(boardPts[0].x, boardPts[0].y);
+    ctx.moveTo(bo0.x, bo0.y);
+    for (var boi = 1; boi < boardPts.length; boi++) {
+      var bop = worldToScreen(boardPts[boi].x, boardPts[boi].y);
+      ctx.lineTo(bop.x, bop.y);
+    }
+    ctx.closePath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  // Hover label
+  if (hoveredTrace) {
+    var label = document.getElementById('hover-label');
+    var iMax = hoveredTrace.stripIMax !== undefined && hoveredTrace.stripIMax !== null
+      ? hoveredTrace.stripIMax : currentMap[hoveredTrace.id];
+    var iStr = (iMax !== undefined && iMax !== null) ? iMax.toFixed(2) + 'A' : '?';
+    var typeStr = hoveredTrace.type === 'ZONE' ? ' [Zone]' : '';
+    var wStr = hoveredTrace.width.toFixed(3) + 'mm';
+    var zoneMinStr = '';
+    if (hoveredTrace.type === 'ZONE' && currentMap[hoveredTrace.id] !== undefined) {
+      zoneMinStr = ' | Min: ' + currentMap[hoveredTrace.id].toFixed(2) + 'A';
+    }
+    var dimStr = '';
+    if (hoveredTrace.type === 'ZONE' && hoveredTrace.widthH !== null && hoveredTrace.heightV !== null) {
+      dimStr = ' | T-H: ↔' + hoveredTrace.widthH.toFixed(2) + '↕' + hoveredTrace.heightV.toFixed(2);
+      if (hoveredTrace.segWidthH !== null && hoveredTrace.segHeightV !== null) {
+        dimStr += ' | Seg: ↔' + hoveredTrace.segWidthH.toFixed(2) + '↕' + hoveredTrace.segHeightV.toFixed(2);
+      }
+    }
+    label.innerHTML = '<strong>' + iStr + '</strong> | ' +
+      (hoveredTrace.net || '(no net)') + ' | ' +
+      (pcbData.apiLayerNames[hoveredTrace.layer] || 'L' + hoveredTrace.layer) + ' | W:' + wStr + dimStr + typeStr + zoneMinStr;
+    label.style.display = 'block';
+    label.style.left = (lastMouseX + 15) + 'px';
+    label.style.top = (lastMouseY - 10) + 'px';
+  } else {
+    document.getElementById('hover-label').style.display = 'none';
+  }
+
+  // Legend gradient bar
+  var barEl = document.getElementById('legend-bar');
+  var q1 = globalMaxI * 0.25, q2 = globalMaxI * 0.5, q3 = globalMaxI * 0.75;
+  barEl.style.background = 'linear-gradient(to right, ' + iToColor(0.1) + ', ' + iToColor(q1) + ', ' + iToColor(q2) + ', ' + iToColor(globalMaxI) + ')';
+}
+
+// ═══════════════════════════════════════
+// Stats & Bottleneck list
+// ═══════════════════════════════════════
+function updateStats() {
+  var useSeg = document.getElementById('calc-mode').value === 'segment';
+  var zonesEnabled = document.getElementById('chk-zones').checked;
+  var ids = Object.keys(currentMap);
+  var minI = Infinity, maxI = -Infinity;
+  var count = ids.length;
+  for (var i = 0; i < ids.length; i++) {
+    var v = currentMap[ids[i]];
+    if (v < minI) minI = v;
+    if (v > maxI) maxI = v;
+  }
+  // Override zone min/max with per-cell values for selected mode
+  if (zonesEnabled) {
+    var zoneIds = Object.keys(zoneGrids);
+    for (var zi = 0; zi < zoneIds.length; zi++) {
+      var zgCells = zoneGrids[zoneIds[zi]].cells;
+      var zMin = Infinity, zMax = -Infinity;
+      for (var ci = 0; ci < zgCells.length; ci++) {
+        var cv = useSeg ? zgCells[ci].segIMax : zgCells[ci].iMax;
+        if (cv < zMin) zMin = cv;
+        if (cv > zMax) zMax = cv;
+      }
+      if (zMin < minI) minI = zMin;
+      if (zMax > maxI) maxI = zMax;
+    }
+  }
+  document.getElementById('stats-content').innerHTML =
+    '<div>Elements: <strong>' + count + '</strong></div>' +
+    '<div>Min I: <strong style="color:' + iToColor(minI) + '">' + (minI === Infinity ? '-' : minI.toFixed(2) + 'A') + '</strong></div>' +
+    '<div>Max I: <strong style="color:' + iToColor(maxI) + '">' + (maxI === -Infinity ? '-' : maxI.toFixed(2) + 'A') + '</strong></div>';
+}
+
+function updateBottleneckList() {
+  if (!pcbData) return;
+  var useSeg = document.getElementById('calc-mode').value === 'segment';
+  // Build net summary from currentMap
+  var netMin = {};
+  function addItem(net, iMax) {
+    if (!net) return;
+    if (netMin[net] === undefined || iMax < netMin[net]) netMin[net] = iMax;
+  }
+  (pcbData.lines || []).forEach(function(l) {
+    if (!isCopperLayer(l.layer)) return;
+    if (currentMap[l.id] !== undefined) addItem(l.net, currentMap[l.id]);
+  });
+  (pcbData.arcs || []).forEach(function(a) {
+    if (!isCopperLayer(a.layer)) return;
+    if (currentMap[a.id] !== undefined) addItem(a.net, currentMap[a.id]);
+  });
+  // For zones, use per-cell min for selected mode
+  var zonesEnabled = document.getElementById('chk-zones').checked;
+  if (zonesEnabled) {
+    (pcbData.zones || []).forEach(function(z) {
+      if (!isCopperLayer(z.layer)) return;
+      var zg = zoneGrids[z.id];
+      if (zg && zg.cells.length > 0) {
+        var zMin = Infinity;
+        for (var ci = 0; ci < zg.cells.length; ci++) {
+          var cv = useSeg ? zg.cells[ci].segIMax : zg.cells[ci].iMax;
+          if (cv < zMin) zMin = cv;
+        }
+        if (zMin < Infinity) addItem(z.net, zMin);
+      } else if (currentMap[z.id] !== undefined) {
+        addItem(z.net, currentMap[z.id]);
+      }
+    });
+  }
+  var keys = Object.keys(netMin).sort(function(a, b) { return netMin[a] - netMin[b]; });
+  var html = '<div style="font-size:11px;color:var(--fg2);margin-bottom:4px;flex-shrink:0;"><strong>Bottlenecks (lowest I max):</strong></div>';
+  keys.slice(0, 50).forEach(function(k) {
+    var iVal = netMin[k];
+    var iStr = iVal === undefined || iVal === Infinity ? '-' : iVal.toFixed(2) + 'A';
+    var cls = selectedNet === k ? ' selected' : '';
+    html += '<div class="bottleneck-item' + cls + '" data-net="' + k.replace(/"/g, '&quot;') + '" style="border-left:3px solid ' + iToColor(iVal) + '">' +
+      '<span>' + esc(k) + '</span> <strong style="float:right;color:' + iToColor(iVal) + '">' + iStr + '</strong>' +
+      '</div>';
+  });
+  document.getElementById('bottleneck-list').innerHTML = html;
+}
+
+// ═══════════════════════════════════════
+// Mouse events
+// ═══════════════════════════════════════
+canvas.addEventListener('mousedown', function(e) {
+  isDragging = true;
+  dragStartX = e.clientX; dragStartY = e.clientY;
+  mouseDownX = e.clientX; mouseDownY = e.clientY;
+});
+
+canvas.addEventListener('mousemove', function(e) {
+  if (isDragging) {
+    var dx = e.clientX - dragStartX;
+    var dy = e.clientY - dragStartY;
+    viewX -= dx / viewScale;
+    viewY += dy / viewScale;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    draw();
+    return;
+  }
+  lastMouseX = e.clientX - canvas.getBoundingClientRect().left;
+  lastMouseY = e.clientY - canvas.getBoundingClientRect().top;
+  hoveredTrace = findTraceAt(lastMouseX, lastMouseY);
+  canvas.style.cursor = hoveredTrace ? 'pointer' : 'grab';
+  draw();
+});
+
+canvas.addEventListener('mouseup', function(e) {
+  isDragging = false;
+  var dx = Math.abs(e.clientX - mouseDownX);
+  var dy = Math.abs(e.clientY - mouseDownY);
+  if (dx < 4 && dy < 4) {
+    // Click — deselect net
+    if (!hoveredTrace) {
+      selectedNet = null;
+      updateBottleneckList();
+      draw();
+    }
+  }
+});
+
+canvas.addEventListener('wheel', function(e) {
+  e.preventDefault();
+  var rect = canvas.getBoundingClientRect();
+  var mx = e.clientX - rect.left;
+  var my = e.clientY - rect.top;
+  var wBefore = screenToWorld(mx, my);
+  var factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+  viewScale *= factor;
+  viewScale = Math.max(0.01, Math.min(10000, viewScale));
+  var wAfter = screenToWorld(mx, my);
+  viewX -= (wAfter.x - wBefore.x);
+  viewY -= (wAfter.y - wBefore.y);
+  draw();
+}, { passive: false });
+
+function findTraceAt(sx, sy) {
+  var w = screenToWorld(sx, sy);
+  var best = null, bestDist = 6 / viewScale;
+  var bestSel = null, bestSelDist = 6 / viewScale; // best from selected net
+  var layerFilter = document.getElementById('viz-layer-filter').value;
+  var showZones = document.getElementById('chk-zones').checked;
+
+  (pcbData.lines || []).forEach(function(l) {
+    if (!isCopperLayer(l.layer)) return;
+    if (layerFilter !== '__all__' && String(l.layer) !== layerFilter) return;
+    var d = pointToSegDist(w.x, w.y, l.startX, l.startY, l.endX, l.endY);
+    var halfW = l.width / 2;
+    if (d - halfW < bestDist) { bestDist = d - halfW; best = l; }
+    if (selectedNet && l.net === selectedNet && d - halfW < bestSelDist) { bestSelDist = d - halfW; bestSel = l; }
+  });
+  (pcbData.arcs || []).forEach(function(a) {
+    if (!isCopperLayer(a.layer)) return;
+    if (layerFilter !== '__all__' && String(a.layer) !== layerFilter) return;
+    var d = Infinity;
+    if (a.arcSegments && a.arcSegments.length > 0) {
+      for (var asi = 0; asi < a.arcSegments.length; asi++) {
+        var sd = pointToSegDist(w.x, w.y, a.arcSegments[asi].x1, a.arcSegments[asi].y1, a.arcSegments[asi].x2, a.arcSegments[asi].y2);
+        if (sd < d) d = sd;
+      }
+    } else {
+      d = pointToSegDist(w.x, w.y, a.startX, a.startY, a.endX, a.endY);
+    }
+    var halfW = a.width / 2;
+    if (d - halfW < bestDist) { bestDist = d - halfW; best = a; }
+    if (selectedNet && a.net === selectedNet && d - halfW < bestSelDist) { bestSelDist = d - halfW; bestSel = a; }
+  });
+  // When a net is selected, prefer traces from that net
+  if (selectedNet && bestSel && bestSel.type !== 'ZONE') return bestSel;
+  // Check zones (grid-level) — only if no trace was found nearby
+  if (!showZones) return selectedNet ? bestSel : best;
+  // When net is selected, don't let non-selected traces block selected zones
+  if (best && best.type !== 'ZONE' && (!selectedNet || best.net === selectedNet)) return best;
+  var bestZone = null, bestZoneArea = Infinity;
+  (pcbData.zones || []).forEach(function(z) {
+    if (!isCopperLayer(z.layer)) return;
+    if (layerFilter !== '__all__' && String(z.layer) !== layerFilter) return;
+    if (!z.bounds) return;
+    // When net selected, skip zones from other nets
+    if (selectedNet && z.net !== selectedNet) return;
+    var bMinX = Math.min(z.bounds.minX, z.bounds.maxX);
+    var bMaxX = Math.max(z.bounds.minX, z.bounds.maxX);
+    var bMinY = Math.min(z.bounds.minY, z.bounds.maxY);
+    var bMaxY = Math.max(z.bounds.minY, z.bounds.maxY);
+    if (w.x < bMinX || w.x > bMaxX || w.y < bMinY || w.y > bMaxY) return;
+
+    // Check if inside polygon
+    var zg = zoneGrids[z.id];
+    var pts = zg ? zg.pts : null;
+    if (pts && pts.length >= 3) {
+      if (!pointInPolygon(w.x, w.y, pts)) return;
+    }
+
+    // Find which grid cell the cursor is in
+    var cellI = null, cellData = null;
+    if (zg && zg.cells.length > 0) {
+      var gx = Math.floor((w.x - zg.bMinX) / zg.xStep);
+      var gy = Math.floor((w.y - zg.bMinY) / zg.yStep);
+      gx = Math.max(0, Math.min(zg.gridSize - 1, gx));
+      gy = Math.max(0, Math.min(zg.gridSize - 1, gy));
+      var useSegCell = document.getElementById('calc-mode').value === 'segment';
+      for (var ci = 0; ci < zg.cells.length; ci++) {
+        if (zg.cells[ci].gx === gx && zg.cells[ci].gy === gy) {
+          cellData = zg.cells[ci];
+          cellI = useSegCell ? cellData.segIMax : cellData.iMax;
+          break;
+        }
+      }
+    }
+
+    // Only select zone if cursor is over a valid cell; prefer smallest zone (most specific)
+    if (!cellData) return;
+    var zArea = (bMaxX - bMinX) * (bMaxY - bMinY);
+    if (zArea >= bestZoneArea) return;
+    bestZoneArea = zArea;
+
+    var useSegFind = document.getElementById('calc-mode').value === 'segment';
+    bestZone = {
+      id: z.id, net: z.net, layer: z.layer, type: 'ZONE',
+      width: cellData ? (useSegFind ? cellData.segEff : cellData.effWidth) : (z.boundsWidth || 0),
+      widthH: cellData ? cellData.widthH : null,
+      heightV: cellData ? cellData.heightV : null,
+      segWidthH: cellData ? cellData.segWidthH : null,
+      segHeightV: cellData ? cellData.segHeightV : null,
+      bounds: z.bounds,
+      stripIMax: cellI
+    };
+  });
+  if (bestZone) { best = bestZone; bestDist = -1; }
+  return best;
+}
+
+function pointToSegDist(px, py, ax, ay, bx, by) {
+  var dx = bx - ax, dy = by - ay;
+  var len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.sqrt((px - ax) * (px - ax) + (py - ay) * (py - ay));
+  var t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+  var cx = ax + t * dx, cy = ay + t * dy;
+  return Math.sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy));
+}
+
+function pointInPolygon(px, py, pts) {
+  var inside = false;
+  for (var i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    var xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+    if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+// ═══════════════════════════════════════
+// Bottleneck list click
+// ═══════════════════════════════════════
+document.getElementById('bottleneck-list').addEventListener('click', function(e) {
+  var item = e.target.closest('.bottleneck-item');
+  if (!item) return;
+  var net = item.getAttribute('data-net');
+  if (selectedNet === net) {
+    selectedNet = null;
+  } else {
+    selectedNet = net;
+  }
+  updateBottleneckList();
+  draw();
+});
+
+// ═══════════════════════════════════════
+// Toolbar events
+// ═══════════════════════════════════════
+document.getElementById('delta-t').addEventListener('change', function() {
+  recalculate();
+  updateStats();
+  updateBottleneckList();
+  draw();
+});
+
+document.getElementById('min-current').addEventListener('change', function() {
+  draw();
+});
+
+document.getElementById('max-current').addEventListener('change', function() {
+  draw();
+});
+
+document.getElementById('viz-layer-filter').addEventListener('change', function() {
+  draw();
+});
+
+document.getElementById('chk-vias').addEventListener('change', function() {
+  draw();
+});
+
+document.getElementById('chk-zones').addEventListener('change', function() {
+  recalculate();
+  updateStats();
+  updateBottleneckList();
+  draw();
+});
+
+document.getElementById('chk-outline').addEventListener('change', function() {
+  draw();
+});
+
+document.getElementById('grid-size').addEventListener('change', function() {
+  var el = this;
+  var v = parseInt(el.value) || 30;
+  if (v < 2) v = 2;
+  if (v > 100) v = 100;
+  el.value = v;
+  recalculate();
+  updateStats();
+  updateBottleneckList();
+  draw();
+});
+
+document.getElementById('calc-mode').addEventListener('change', function() {
+  recalculate();
+  updateStats();
+  updateBottleneckList();
+  draw();
+});
+
+document.getElementById('trace-clearance').addEventListener('change', function() {
+  var el = this;
+  var v = parseFloat(el.value) || 0.4;
+  if (v < 0) v = 0;
+  if (v > 5) v = 5;
+  el.value = v;
+  recalculate();
+  updateStats();
+  updateBottleneckList();
+  draw();
+});
+
+document.getElementById('grid-size').addEventListener('blur', function() {
+  var el = this;
+  var v = parseInt(el.value) || 30;
+  if (v < 2) v = 2;
+  if (v > 100) v = 100;
+  el.value = v;
+});
+
+document.getElementById('btn-fit').addEventListener('click', function() {
+  fitView();
+  draw();
+});
+
+// ═══════════════════════════════════════
+// Filters
+// ═══════════════════════════════════════
+function updateLegendLabels() {
+  var el = document.getElementById('legend-labels');
+  if (!el) return;
+  function fmt(v) { return v >= 10 ? v.toFixed(0) + 'A' : v >= 1 ? v.toFixed(1) + 'A' : v.toFixed(2) + 'A'; }
+  var q1 = globalMaxI * 0.33, q2 = globalMaxI * 0.66;
+  el.innerHTML = '<span>0A</span><span>' + fmt(q1) + '</span><span>' + fmt(q2) + '</span><span>' + fmt(globalMaxI) + '</span>';
+}
+
+function populateFilters() {
+  if (!pcbData) return;
+  var layers = {};
+  var layerNames = pcbData.apiLayerNames || {};
+  (pcbData.lines || []).forEach(function(l) { if (!isCopperLayer(l.layer)) return; layers[l.layer] = layerNames[l.layer] || ('Layer ' + l.layer); });
+  (pcbData.arcs || []).forEach(function(a) { if (!isCopperLayer(a.layer)) return; layers[a.layer] = layerNames[a.layer] || ('Layer ' + a.layer); });
+  (pcbData.zones || []).forEach(function(z) { if (!isCopperLayer(z.layer)) return; layers[z.layer] = layerNames[z.layer] || ('Layer ' + z.layer); });
+  var sel = document.getElementById('viz-layer-filter');
+  sel.innerHTML = '<option value="__all__">All layers</option>';
+  Object.keys(layers).sort(function(a, b) { return Number(a) - Number(b); }).forEach(function(l) {
+    sel.innerHTML += '<option value="' + l + '">' + esc(layers[l]) + '</option>';
+  });
+}
+
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ═══════════════════════════════════════
+// Debug Export
+// ═══════════════════════════════════════
+document.getElementById('btn-debug-viz').addEventListener('click', function() {
+  var dbg = {};
+  dbg.settings = {
+    deltaT: parseFloat(document.getElementById('delta-t').value),
+    calcMode: document.getElementById('calc-mode').value,
+    gridSize: parseInt(document.getElementById('grid-size').value),
+    clearance: parseFloat(document.getElementById('trace-clearance').value),
+    globalMaxI: globalMaxI
+  };
+  dbg.stackup = stackup;
+  dbg.copperLayerCount = pcbData.copperLayerCount;
+
+  // Zones — focused on pour-inside-pour diagnosis
+  dbg.zones = (pcbData.zones || []).map(function(z) {
+    var zg = zoneGrids[z.id];
+    var s = {
+      id: z.id, net: z.net, layer: z.layer,
+      layerName: (pcbData.apiLayerNames || {})[z.layer] || ('L' + z.layer),
+      bounds: z.bounds,
+      pts: z.outlinePoints || null,
+      holes: (z.holes || []).length,
+      traceObs: (z.traceObstacles || []).length,
+      padObs: (z.padObstacles || []).length,
+      iMap: currentMap[z.id]
+    };
+    if (zg) {
+      s.grid = {
+        cells: zg.cells.length,
+        siblings: zg.allPtsList ? zg.allPtsList.length - 1 : 0,
+        zoneObs: (zg.zoneObs || []).map(function(zo) {
+          return { net: zo.net, fullArea: zo.fullArea, bounds: zo.bounds };
+        })
+      };
+      // Only cells with lowest current (bottleneck cells)
+      if (zg.cells.length > 0) {
+        var sorted = zg.cells.slice().sort(function(a, b) { return a.iMax - b.iMax; });
+        s.grid.worstCells = sorted.slice(0, 5).map(function(c) {
+          return { gx: c.gx, gy: c.gy, wH: +c.widthH.toFixed(3), hV: +c.heightV.toFixed(3), effW: +c.effWidth.toFixed(3), iMax: +c.iMax.toFixed(3), segEff: +c.segEff.toFixed(3), segI: +c.segIMax.toFixed(3) };
+        });
+        var best = zg.cells.slice().sort(function(a, b) { return b.iMax - a.iMax; });
+        s.grid.bestCells = best.slice(0, 3).map(function(c) {
+          return { gx: c.gx, gy: c.gy, wH: +c.widthH.toFixed(3), hV: +c.heightV.toFixed(3), effW: +c.effWidth.toFixed(3), iMax: +c.iMax.toFixed(3) };
+        });
+      }
+    }
+    return s;
+  });
+
+  // Counts only
+  dbg.counts = {
+    lines: (pcbData.lines || []).length,
+    arcs: (pcbData.arcs || []).length,
+    vias: (pcbData.vias || []).length,
+    pads: (pcbData.pads || []).length,
+    smdPads: (pcbData.pads || []).filter(function(p) { return !p.hole || !p.hole.width; }).length,
+    thtPads: (pcbData.pads || []).filter(function(p) { return p.hole && p.hole.width > 0; }).length
+  };
+
+  // Width distribution: unique widths with count for lines and arcs
+  var lineWidths = {}, arcWidths = {};
+  (pcbData.lines || []).forEach(function(l) {
+    var w = +l.width.toFixed(4);
+    lineWidths[w] = (lineWidths[w] || 0) + 1;
+  });
+  (pcbData.arcs || []).forEach(function(a) {
+    var w = +a.width.toFixed(4);
+    arcWidths[w] = (arcWidths[w] || 0) + 1;
+  });
+  dbg.widthDistribution = { lineWidths: lineWidths, arcWidths: arcWidths };
+
+  // Arc width fix stats
+  if (pcbData._arcWidthFix) {
+    dbg.arcWidthFix = pcbData._arcWidthFix;
+  }
+
+  // Pad samples — first 5 SMD pads to verify dimensions
+  var smdPads = (pcbData.pads || []).filter(function(p) { return !p.hole || !p.hole.width; });
+  dbg.padSamples = smdPads.slice(0, 5).map(function(p) {
+    return { id: p.id, x: +p.x.toFixed(3), y: +p.y.toFixed(3), w: +p.padWidth.toFixed(3), h: +p.padHeight.toFixed(3), net: p.net, layer: p.layer };
+  });
+
+  // Arc samples — first 10 arcs to verify width
+  dbg.arcSamples = (pcbData.arcs || []).slice(0, 10).map(function(a) {
+    return {
+      id: a.id, net: a.net, layer: a.layer,
+      width: +a.width.toFixed(4),
+      arcAngle: a.arcAngle,
+      startX: +a.startX.toFixed(3), startY: +a.startY.toFixed(3),
+      endX: +a.endX.toFixed(3), endY: +a.endY.toFixed(3),
+      segs: a.arcSegments ? a.arcSegments.length : 0,
+      iMax: currentMap[a.id] !== undefined ? +currentMap[a.id].toFixed(3) : null
+    };
+  });
+
+  // Line samples — first 5 lines for comparison
+  dbg.lineSamples = (pcbData.lines || []).slice(0, 5).map(function(l) {
+    return {
+      id: l.id, net: l.net, layer: l.layer,
+      width: +l.width.toFixed(4),
+      iMax: currentMap[l.id] !== undefined ? +currentMap[l.id].toFixed(3) : null
+    };
+  });
+
+  // Raw API sample data — dump ALL properties for diagnosis
+  if (pcbData._rawSamples) {
+    dbg.rawSamples = {};
+    if (pcbData._rawSamples.Pad) {
+      var rs = pcbData._rawSamples.Pad;
+      dbg.rawSamples.Pad = { count: rs.count, allProps: rs.sample };
+    }
+    if (pcbData._rawSamples.Pour) {
+      var rp = pcbData._rawSamples.Pour;
+      dbg.rawSamples.Pour = { count: rp.count, allProps: rp.sample };
+    }
+    if (pcbData._rawSamples.Fill) {
+      var rf = pcbData._rawSamples.Fill;
+      dbg.rawSamples.Fill = { count: rf.count, allProps: rf.sample };
+    }
+    if (pcbData._rawSamples.Arc) {
+      dbg.rawSamples.Arc = { count: pcbData._rawSamples.Arc.count, allProps: pcbData._rawSamples.Arc.sample };
+    }
+    if (pcbData._rawSamples.Line) {
+      dbg.rawSamples.Line = { count: pcbData._rawSamples.Line.count, allProps: pcbData._rawSamples.Line.sample };
+    }
+  }
+
+  // Debug APIs — which extra APIs found zone items
+  if (pcbData._debugApis) {
+    dbg.apiDebug = {};
+    for (var ak in pcbData._debugApis) {
+      if (ak === 'boardOutlineDebug') continue;
+      var ad = pcbData._debugApis[ak];
+      if (ad && (ad.count > 0 || ad.error)) dbg.apiDebug[ak] = ad;
+    }
+  }
+
+  // All zones with subType info
+  dbg.allZonesRaw = (pcbData.zones || []).map(function(z) {
+    var entry = { id: z.id, net: z.net, layer: z.layer, subType: z.subType, hasPts: !!(z.outlinePoints && z.outlinePoints.length >= 3), area: z.areaMm2 ? +z.areaMm2.toFixed(1) : null };
+    if (z._rawPoly) entry.rawPoly = z._rawPoly;
+    if (z._rawX !== undefined) entry.rawX = z._rawX;
+    if (z._rawY !== undefined) entry.rawY = z._rawY;
+    if (z._rawBounds) entry.rawBounds = z._rawBounds;
+    return entry;
+  });
+
+  var json = JSON.stringify(dbg, null, 2);
+  document.getElementById('debug-viz-json').value = json;
+  document.getElementById('debug-viz-overlay').style.display = 'block';
+  document.getElementById('debug-viz-panel').style.display = 'flex';
+});
+
+document.getElementById('btn-dbgviz-copy').addEventListener('click', function() {
+  var ta = document.getElementById('debug-viz-json');
+  ta.select();
+  document.execCommand('copy');
+});
+
+document.getElementById('btn-dbgviz-download').addEventListener('click', function() {
+  var json = document.getElementById('debug-viz-json').value;
+  var blob = new Blob([json], { type: 'application/json' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'viz-debug-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+document.getElementById('btn-dbgviz-close').addEventListener('click', function() {
+  document.getElementById('debug-viz-overlay').style.display = 'none';
+  document.getElementById('debug-viz-panel').style.display = 'none';
+});
+document.getElementById('debug-viz-overlay').addEventListener('click', function() {
+  document.getElementById('debug-viz-overlay').style.display = 'none';
+  document.getElementById('debug-viz-panel').style.display = 'none';
+});
+</script>
+</body>
+</html>

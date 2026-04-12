@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PCB Trace Current Capacity</title>
+<script src="/iframe/current-calc.js"></script>
+<style>
+:root {
+  --bg: #1a1a2e; --bg2: #16213e; --bg3: #0f3460; --fg: #eee; --fg2: #aaa;
+  --card: #16213e; --border: #0f3460; --input-bg: #0d1b2a; --input-fg: #eee;
+  --accent: #4cc9f0; --accent2: #7209b7;
+  --green: #4CAF50; --blue: #2196F3; --purple: #9C27B0; --orange: #FF9800; --red: #F44336;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; overflow: hidden; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--fg); display: flex; flex-direction: column; }
+.toolbar { display: flex; align-items: center; gap: 10px; padding: 6px 16px; background: var(--bg2); border-bottom: 1px solid var(--border); flex-wrap: wrap; flex-shrink: 0; }
+.toolbar h1 { font-size: 14px; font-weight: 600; white-space: nowrap; }
+.toolbar select, .toolbar input { font-size: 12px; padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border); background: var(--input-bg); color: var(--input-fg); }
+.toolbar button { font-size: 12px; padding: 4px 12px; border-radius: 4px; border: none; background: var(--accent); color: #fff; font-weight: 500; cursor: pointer; }
+.toolbar button:hover { opacity: 0.85; }
+.toolbar button.secondary { background: transparent; border: 1px solid var(--border); color: var(--fg2); }
+.spacer { flex: 1; }
+.status { font-size: 11px; color: var(--fg2); }
+
+.main { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.sidebar { width: 260px; min-width: 220px; background: var(--bg2); border-right: 1px solid var(--border); overflow-y: auto; padding: 12px; flex-shrink: 0; }
+.content { flex: 1; overflow-y: auto; padding: 12px; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 8px; text-align: center; }
+.card .value { font-size: 20px; font-weight: 700; color: var(--accent); }
+.card .label { font-size: 10px; color: var(--fg2); margin-top: 2px; }
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { background: var(--bg3); color: var(--fg); padding: 6px 8px; text-align: left; position: sticky; top: 0; z-index: 1; white-space: nowrap; cursor: pointer; }
+th:hover { background: var(--accent2); }
+td { padding: 5px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+tr:hover td { background: rgba(76,201,240,0.05); }
+tr.selected-row td { background: rgba(76,201,240,0.12); }
+.card.selection-card { border-color: var(--accent); }
+.card.selection-card .value { font-size: 16px; }
+.card.selection-card .sel-details { font-size: 10px; color: var(--fg2); margin-top: 4px; max-height: 80px; overflow-y: auto; text-align: left; padding: 0 4px; }
+.card.selection-card .sel-item { display: flex; justify-content: space-between; padding: 1px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+td input[type=checkbox] { cursor: pointer; }
+th input[type=checkbox] { cursor: pointer; }
+
+.sb-section { margin-bottom: 14px; }
+.sb-section h3 { font-size: 12px; color: var(--fg2); margin-bottom: 6px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.sb-row { display: flex; justify-content: space-between; align-items: center; font-size: 11px; padding: 3px 0; }
+.sb-row .net-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+.sb-row .current-badge { padding: 2px 6px; border-radius: 10px; font-weight: 600; font-size: 10px; color: #fff; }
+
+/* Settings modal */
+.overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 199; }
+.overlay.visible { display: block; }
+.settings-panel { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px; width: 450px; max-height: 80vh; overflow-y: auto; z-index: 200; }
+.settings-panel.visible { display: block; }
+.settings-panel h2 { font-size: 15px; margin-bottom: 12px; }
+.settings-panel label { display: block; font-size: 12px; color: var(--fg2); margin-bottom: 4px; margin-top: 8px; }
+.settings-panel input, .settings-panel select { width: 100%; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--input-bg); color: var(--input-fg); font-size: 12px; }
+.settings-panel .actions { display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; }
+.settings-panel .actions button { padding: 5px 14px; }
+
+#drop-zone { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 16px; }
+#drop-zone .icon { font-size: 56px; opacity: 0.3; }
+#drop-zone p { font-size: 14px; color: var(--fg2); }
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <h1>⚡ Current Capacity</h1>
+  <select id="layer-filter" class="hidden">
+    <option value="__all__">All layers</option>
+  </select>
+  <input type="text" id="search-box" placeholder="Search net..." class="hidden" style="width:120px;">
+  <label class="hidden" id="lbl-dt" style="font-size:11px;color:var(--fg2);margin-left:6px;">ΔT:</label>
+  <input type="number" id="delta-t" value="10" min="1" max="100" step="1" class="hidden" style="width:50px;" title="Temperature rise (°C)">
+  <label class="hidden" id="lbl-dt-unit" style="font-size:11px;color:var(--fg2);">°C</label>
+  <label class="hidden" id="lbl-amb" style="font-size:11px;color:var(--fg2);margin-left:4px;">Amb:</label>
+  <input type="number" id="ambient-t" value="25" min="-40" max="125" step="1" class="hidden" style="width:50px;" title="Ambient temperature (°C)">
+  <label class="hidden" id="lbl-amb-unit" style="font-size:11px;color:var(--fg2);">°C</label>
+  <button id="btn-settings" class="secondary hidden">⚙ Stackup</button>
+  <button id="btn-export" class="secondary hidden">📋 CSV</button>
+  <button id="btn-viz" class="hidden" style="background:#7209b7;">🎨 Visualize</button>
+  <label class="hidden" id="lbl-chk-zones" style="font-size:11px;color:var(--fg2);margin-left:6px;cursor:pointer;"><input type="checkbox" id="chk-show-zones"> Zones</label>
+  <button id="btn-debug" class="hidden" style="background:#e63946;font-size:11px;">🔍 Debug Pour</button>
+  <div class="spacer"></div>
+  <span class="status" id="status">Waiting for data...</span>
+</div>
+
+<div class="main">
+  <div class="sidebar hidden" id="sidebar">
+    <div class="sb-section">
+      <h3>Bottlenecks by Net</h3>
+      <div id="net-summary"></div>
+    </div>
+  </div>
+
+  <div class="content" id="content">
+    <div id="drop-zone">
+      <div class="icon">⚡</div>
+      <p>Loading PCB data...</p>
+      <button id="btn-manual-load" style="padding:10px 28px;font-size:14px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;">
+        Load data
+      </button>
+    </div>
+
+    <div id="results-area" class="hidden">
+      <div class="cards" id="summary-cards"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="text-align:center;width:30px;"><input type="checkbox" id="chk-select-all" title="Select all"></th>
+              <th data-sort="net">Net</th>
+              <th data-sort="layer">Layer</th>
+              <th data-sort="width" style="text-align:center">Width (mm)</th>
+              <th data-sort="length" style="text-align:center">Length (mm)</th>
+              <th data-sort="segs" style="text-align:center">Segs</th>
+              <th data-sort="area" style="text-align:center">Area (mil²)</th>
+              <th data-sort="imax" style="text-align:center">I max (A)</th>
+              <th data-sort="resist" style="text-align:center">R (mΩ)</th>
+              <th data-sort="vdrop" style="text-align:center">V drop @ I</th>
+              <th data-sort="position">Position</th>
+            </tr>
+          </thead>
+          <tbody id="results-table"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="overlay" id="overlay"></div>
+<div class="settings-panel" id="settings-panel">
+  <h2>⚙ Copper Stackup</h2>
+  <label>Outer Copper Thickness (oz):</label>
+  <input type="number" id="cfg-outer-cu" value="1" min="0.25" max="10" step="0.25">
+  <label>Inner Copper Thickness (oz):</label>
+  <input type="number" id="cfg-inner-cu" value="0.5" min="0.25" max="10" step="0.25">
+  <div style="font-size:10px;color:var(--fg2);margin-top:4px;">1 oz ≈ 0.035 mm (35 µm)</div>
+  <div class="actions">
+    <button class="secondary" id="btn-cancel-settings">Cancel</button>
+    <button id="btn-save-settings">Apply</button>
+  </div>
+</div>
+
+<!-- Debug Modal -->
+<div class="overlay" id="debug-overlay"></div>
+<div class="settings-panel" id="debug-panel" style="width:700px;max-height:85vh;">
+  <h2>🐛 Debug — Raw Extracted Data</h2>
+  <div style="margin-bottom:8px;font-size:11px;color:var(--fg2);">
+    <span id="debug-summary"></span>
+  </div>
+  <textarea id="debug-json" readonly style="width:100%;height:55vh;font-family:Consolas,'Courier New',monospace;font-size:11px;background:var(--input-bg);color:var(--input-fg);border:1px solid var(--border);border-radius:4px;padding:8px;resize:vertical;white-space:pre;tab-size:2;"></textarea>
+  <div class="actions">
+    <button class="secondary" id="btn-debug-copy">📋 Copy</button>
+    <button id="btn-debug-close">Close</button>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════
+// State
+// ═══════════════════════════════════════
+var STORAGE_KEY = 'current-capacity-data';
+var STACKUP_STORAGE_KEY = 'current-capacity-stackup';
+var VIZ_STORAGE_KEY = 'current-capacity-viz';
+
+var pcbData = null;
+var analysisData = null;
+var OZ_TO_MM = 0.035;
+var currentStackup = {
+  outerCopperOz: 1.6,
+  innerCopperOz: 0.5,
+  outerCopperMm: 0.035,
+  innerCopperMm: 0.0175
+};
+var sortColumn = 'imax';
+var sortAsc = true;
+var selectedRows = {}; // key → true
+
+// ═══════════════════════════════════════
+// Init
+// ═══════════════════════════════════════
+(async function init() {
+  // Load stackup
+  try {
+    var saved = await eda.sys_Storage.getExtensionUserConfig(STACKUP_STORAGE_KEY);
+    if (saved && saved.outerCopperMm) {
+      currentStackup.outerCopperMm = saved.outerCopperMm;
+      currentStackup.innerCopperMm = saved.innerCopperMm || 0.0175;
+      currentStackup.outerCopperOz = saved.outerCopperOz || (saved.outerCopperMm / OZ_TO_MM);
+      currentStackup.innerCopperOz = saved.innerCopperOz || (saved.innerCopperMm / OZ_TO_MM);
+    }
+  } catch(e) {}
+
+  // Load PCB data
+  try {
+    var data = await eda.sys_Storage.getExtensionUserConfig(STORAGE_KEY);
+    if (data && (data.lines || data.arcs || data.zones)) {
+      onDataLoaded(data);
+      return;
+    }
+  } catch(e) {}
+  setStatus('Click Load data or run from menu');
+})();
+
+async function loadPCBData() {
+  try {
+    var data = await eda.sys_Storage.getExtensionUserConfig(STORAGE_KEY);
+    if (data && (data.lines || data.arcs || data.zones)) {
+      onDataLoaded(data);
+    } else {
+      setStatus('No PCB data found. Run extension from PCB menu first.');
+    }
+  } catch(e) {
+    setStatus('Error loading data: ' + e);
+  }
+}
+
+function onDataLoaded(data) {
+  pcbData = data;
+  analyzeCurrentCapacity();
+
+  ['layer-filter','search-box','btn-settings','btn-export','btn-viz','btn-debug','delta-t','ambient-t','lbl-dt','lbl-dt-unit','lbl-amb','lbl-amb-unit','lbl-chk-zones'].forEach(function(id) {
+    document.getElementById(id).classList.remove('hidden');
+  });
+  document.getElementById('sidebar').classList.remove('hidden');
+  document.getElementById('drop-zone').classList.add('hidden');
+  document.getElementById('results-area').classList.remove('hidden');
+
+  populateFilters();
+  renderAll();
+  setStatus(analysisData.results.length + ' trace groups analyzed');
+}
+
+// ═══════════════════════════════════════
+// Analysis
+// ═══════════════════════════════════════
+function analyzeCurrentCapacity() {
+  var deltaT = parseFloat(document.getElementById('delta-t').value) || 10;
+  var ambientT = parseFloat(document.getElementById('ambient-t').value) || 25;
+  var copperLayerCount = pcbData.copperLayerCount || 2;
+
+  var results = [];
+  var layerNames = pcbData.apiLayerNames || {};
+
+  // Process lines
+  (pcbData.lines || []).forEach(function(l) {
+    var isInternal = CurrentCalc.isInternalLayer(l.layer, copperLayerCount);
+    var cuThick = isInternal ? currentStackup.innerCopperMm : currentStackup.outerCopperMm;
+    var dx = l.endX - l.startX;
+    var dy = l.endY - l.startY;
+    var length = Math.sqrt(dx * dx + dy * dy);
+    var iMax = CurrentCalc.calcMaxCurrent(l.width, cuThick, deltaT, isInternal);
+    var resistance = CurrentCalc.calcResistance(length, l.width, cuThick, ambientT + deltaT);
+
+    results.push({
+      type: 'WIRE',
+      id: l.id,
+      net: l.net || '(no net)',
+      layer: l.layer,
+      layerName: layerNames[l.layer] || ('Layer ' + l.layer),
+      isInternal: isInternal,
+      width: l.width,
+      length: length,
+      cuThick: cuThick,
+      areaMil2: l.width * CurrentCalc.MM_TO_MIL * cuThick * CurrentCalc.MM_TO_MIL,
+      iMax: iMax,
+      resistance: resistance,
+      startX: l.startX, startY: l.startY,
+      endX: l.endX, endY: l.endY,
+      position: isInternal ? 'Internal' : 'External'
+    });
+  });
+
+  // Process arcs
+  (pcbData.arcs || []).forEach(function(a) {
+    var isInternal = CurrentCalc.isInternalLayer(a.layer, copperLayerCount);
+    var cuThick = isInternal ? currentStackup.innerCopperMm : currentStackup.outerCopperMm;
+    // Arc length approximation
+    var dx = a.endX - a.startX;
+    var dy = a.endY - a.startY;
+    var chord = Math.sqrt(dx * dx + dy * dy);
+    var angleRad = Math.abs(a.arcAngle || 0) * Math.PI / 180;
+    var length = angleRad > 0 ? (chord / (2 * Math.sin(angleRad / 2))) * angleRad : chord;
+    if (isNaN(length) || length <= 0) length = chord;
+    var iMax = CurrentCalc.calcMaxCurrent(a.width, cuThick, deltaT, isInternal);
+    var resistance = CurrentCalc.calcResistance(length, a.width, cuThick, ambientT + deltaT);
+
+    results.push({
+      type: 'ARC',
+      id: a.id,
+      net: a.net || '(no net)',
+      layer: a.layer,
+      layerName: layerNames[a.layer] || ('Layer ' + a.layer),
+      isInternal: isInternal,
+      width: a.width,
+      length: length,
+      cuThick: cuThick,
+      areaMil2: a.width * CurrentCalc.MM_TO_MIL * cuThick * CurrentCalc.MM_TO_MIL,
+      iMax: iMax,
+      resistance: resistance,
+      startX: a.startX, startY: a.startY,
+      endX: a.endX, endY: a.endY,
+      position: isInternal ? 'Internal' : 'External'
+    });
+  });
+
+  // Process zones (copper pours / ground planes) — grid-based analysis
+  (pcbData.zones || []).forEach(function(z) {
+    if (!z.bounds) return;
+    var isInternal = CurrentCalc.isInternalLayer(z.layer, copperLayerCount);
+    var cuThick = isInternal ? currentStackup.innerCopperMm : currentStackup.outerCopperMm;
+
+    var bw = z.boundsWidth || 0;
+    var bh = z.boundsHeight || 0;
+    if (bw <= 0 || bh <= 0) return;
+
+    var pts = z.outlinePoints;
+    if (!pts || pts.length < 3) {
+      pts = [
+        { x: z.bounds.minX, y: z.bounds.minY },
+        { x: z.bounds.maxX, y: z.bounds.minY },
+        { x: z.bounds.maxX, y: z.bounds.maxY },
+        { x: z.bounds.minX, y: z.bounds.maxY }
+      ];
+    }
+
+    var bMinX = z.bounds.minX, bMaxX = z.bounds.maxX;
+    var bMinY = z.bounds.minY, bMaxY = z.bounds.maxY;
+    var GRID_SIZE = 25;
+    var xStep = (bMaxX - bMinX) / GRID_SIZE;
+    var yStep = (bMaxY - bMinY) / GRID_SIZE;
+
+    var minCellI = Infinity;
+    var minEffW = Infinity;
+
+    if (xStep > 0 && yStep > 0) {
+      for (var gy = 0; gy < GRID_SIZE; gy++) {
+        for (var gx = 0; gx < GRID_SIZE; gx++) {
+          var cx = bMinX + (gx + 0.5) * xStep;
+          var cy = bMinY + (gy + 0.5) * yStep;
+          if (!_pointInPolygon(cx, cy, pts)) continue;
+          var wH = _localWidthAtY(pts, cy, cx);
+          var hV = _localHeightAtX(pts, cx, cy);
+          var eff = Math.min(wH, hV);
+          if (eff <= 0) continue;
+          var cellI = CurrentCalc.calcMaxCurrent(eff, cuThick, deltaT, isInternal);
+          if (cellI < minCellI) { minCellI = cellI; minEffW = eff; }
+        }
+      }
+    }
+
+    // Fallback if grid found no cells
+    var effectiveWidth = minEffW !== Infinity ? minEffW : Math.min(bw, bh);
+    var effectiveLength = Math.max(bw, bh);
+    if (z.areaMm2 && z.areaMm2 > 0 && minEffW === Infinity) {
+      effectiveWidth = z.areaMm2 / effectiveLength;
+    }
+
+    var iMax = minCellI !== Infinity ? minCellI : CurrentCalc.calcMaxCurrent(effectiveWidth, cuThick, deltaT, isInternal);
+    var resistance = CurrentCalc.calcResistance(effectiveLength, effectiveWidth, cuThick, ambientT + deltaT);
+
+    results.push({
+      type: 'ZONE',
+      id: z.id,
+      net: z.net || '(no net)',
+      layer: z.layer,
+      layerName: layerNames[z.layer] || ('Layer ' + z.layer),
+      isInternal: isInternal,
+      width: effectiveWidth,
+      length: effectiveLength,
+      cuThick: cuThick,
+      areaMil2: effectiveWidth * CurrentCalc.MM_TO_MIL * cuThick * CurrentCalc.MM_TO_MIL,
+      iMax: iMax,
+      resistance: resistance,
+      startX: z.bounds.minX, startY: z.bounds.minY,
+      endX: z.bounds.maxX, endY: z.bounds.maxY,
+      position: isInternal ? 'Internal' : 'External'
+    });
+  });
+
+  // ── Polygon helpers for zone grid analysis ──
+  function _getXIntersections(pts, y) {
+    var xs = [];
+    for (var i = 0; i < pts.length; i++) {
+      var j = (i + 1) % pts.length;
+      var yi = pts[i].y, yj = pts[j].y;
+      if ((yi <= y && yj > y) || (yj <= y && yi > y)) {
+        var t = (y - yi) / (yj - yi);
+        xs.push(pts[i].x + t * (pts[j].x - pts[i].x));
+      }
+    }
+    xs.sort(function(a, b) { return a - b; });
+    return xs;
+  }
+  function _getYIntersections(pts, x) {
+    var ys = [];
+    for (var i = 0; i < pts.length; i++) {
+      var j = (i + 1) % pts.length;
+      var xi = pts[i].x, xj = pts[j].x;
+      if ((xi <= x && xj > x) || (xj <= x && xi > x)) {
+        var t = (x - xi) / (xj - xi);
+        ys.push(pts[i].y + t * (pts[j].y - pts[i].y));
+      }
+    }
+    ys.sort(function(a, b) { return a - b; });
+    return ys;
+  }
+  function _localWidthAtY(pts, y, px) {
+    var xs = _getXIntersections(pts, y);
+    for (var i = 0; i + 1 < xs.length; i += 2) {
+      if (px >= xs[i] && px <= xs[i + 1]) return xs[i + 1] - xs[i];
+    }
+    return 0;
+  }
+  function _localHeightAtX(pts, x, py) {
+    var ys = _getYIntersections(pts, x);
+    for (var i = 0; i + 1 < ys.length; i += 2) {
+      if (py >= ys[i] && py <= ys[i + 1]) return ys[i + 1] - ys[i];
+    }
+    return 0;
+  }
+  function _pointInPolygon(px, py, pts) {
+    var inside = false;
+    for (var i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      var xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+      if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  // Group by net+layer+width
+  var groups = {};
+  results.forEach(function(r) {
+    var key = r.net + '|' + r.layer + '|' + r.type + '|' + (Math.round(r.width * 1000) / 1000);
+    if (!groups[key]) {
+      groups[key] = {
+        type: r.type, net: r.net, layer: r.layer, layerName: r.layerName,
+        isInternal: r.isInternal, width: r.width,
+        cuThick: r.cuThick, areaMil2: r.areaMil2,
+        iMax: r.iMax, position: r.position,
+        totalLength: 0, totalResistance: 0, count: 0,
+        minIMax: Infinity
+      };
+    }
+    groups[key].totalLength += r.length;
+    groups[key].totalResistance += r.resistance;
+    groups[key].count++;
+    if (r.iMax < groups[key].minIMax) groups[key].minIMax = r.iMax;
+  });
+
+  var grouped = [];
+  Object.keys(groups).forEach(function(k) {
+    var g = groups[k];
+    grouped.push(g);
+  });
+
+  // Net summary: min I max per net (bottleneck)
+  var netSummary = {};
+  grouped.forEach(function(g) {
+    if (!netSummary[g.net]) {
+      netSummary[g.net] = { minIMax: Infinity, totalLength: 0, count: 0 };
+    }
+    if (g.iMax < netSummary[g.net].minIMax) netSummary[g.net].minIMax = g.iMax;
+    netSummary[g.net].totalLength += g.totalLength;
+    netSummary[g.net].count += g.count;
+  });
+
+  analysisData = {
+    results: grouped,
+    rawResults: results,
+    netSummary: netSummary,
+    deltaT: deltaT,
+    ambientT: ambientT
+  };
+}
+
+// ═══════════════════════════════════════
+// Rendering
+// ═══════════════════════════════════════
+function renderAll() {
+  if (!analysisData) return;
+  renderSummaryCards();
+  renderTable();
+  renderNetSummary();
+}
+
+function getFilteredGroups() {
+  var layerVal = document.getElementById('layer-filter').value;
+  var searchVal = (document.getElementById('search-box').value || '').toLowerCase();
+  var showZones = document.getElementById('chk-show-zones').checked;
+  return analysisData.results.filter(function(r) {
+    if (!showZones && r.type === 'ZONE') return false;
+    if (layerVal !== '__all__' && String(r.layer) !== layerVal) return false;
+    if (searchVal && r.net.toLowerCase().indexOf(searchVal) < 0) return false;
+    return true;
+  });
+}
+
+function currentGradient(iMax) {
+  // Green = high current capacity, Red = low
+  // Map: 0A → red, 1A → orange, 3A → green, 10A+ → deep green
+  if (iMax <= 0) return '#888';
+  var t;
+  if (iMax < 0.5) t = 0;
+  else if (iMax < 1) t = 0.2;
+  else if (iMax < 2) t = 0.4;
+  else if (iMax < 5) t = 0.6;
+  else if (iMax < 10) t = 0.8;
+  else t = 1.0;
+  // red → orange → yellow → green
+  var r, g, b;
+  if (t < 0.33) {
+    var s = t / 0.33;
+    r = 240; g = Math.round(60 + 140 * s); b = 30;
+  } else if (t < 0.66) {
+    var s = (t - 0.33) / 0.33;
+    r = Math.round(240 - 160 * s); g = Math.round(200 + 30 * s); b = Math.round(30 + 10 * s);
+  } else {
+    var s = (t - 0.66) / 0.34;
+    r = Math.round(80 - 40 * s); g = Math.round(230 - 30 * s); b = Math.round(40 + 20 * s);
+  }
+  return 'rgb(' + r + ',' + g + ',' + b + ')';
+}
+
+function renderSummaryCards() {
+  var groups = getFilteredGroups();
+  var minI = Infinity, maxI = -Infinity, sumI = 0, cnt = 0;
+  var totalLen = 0, nets = {};
+  groups.forEach(function(g) {
+    nets[g.net] = true;
+    if (g.iMax < minI) minI = g.iMax;
+    if (g.iMax > maxI) maxI = g.iMax;
+    sumI += g.iMax; cnt++;
+    totalLen += g.totalLength;
+  });
+  var avgI = cnt > 0 ? (sumI / cnt).toFixed(2) : '-';
+  if (minI === Infinity) minI = '-'; else minI = minI.toFixed(2);
+  if (maxI === -Infinity) maxI = '-'; else maxI = maxI.toFixed(2);
+
+  // Selection card
+  var selKeys = Object.keys(selectedRows);
+  var selCount = selKeys.length;
+  var selCardHtml = '';
+  if (selCount > 0) {
+    var selTotalI = 0, selMinI = Infinity, selTotalR = 0, selTotalLen = 0;
+    var selDetailsHtml = '';
+    groups.forEach(function(g) {
+      var gKey = g.net + '|' + g.layer + '|' + g.type + '|' + (Math.round(g.width * 1000) / 1000);
+      if (!selectedRows[gKey]) return;
+      selTotalI += g.iMax;
+      if (g.iMax < selMinI) selMinI = g.iMax;
+      selTotalR += g.totalResistance;
+      selTotalLen += g.totalLength;
+      selDetailsHtml += '<div class="sel-item"><span>' + esc(g.net) + ' ' + esc(g.layerName) + '</span><strong style="color:' + currentGradient(g.iMax) + '">' + g.iMax.toFixed(2) + 'A</strong></div>';
+    });
+    var totalIStr = selTotalI.toFixed(2) + 'A';
+    var parallelR = selCount > 0 && selTotalR > 0 ? (1 / selKeys.reduce(function(sum, k) {
+      var found = null;
+      groups.forEach(function(g) {
+        var gKey = g.net + '|' + g.layer + '|' + g.type + '|' + (Math.round(g.width * 1000) / 1000);
+        if (gKey === k && g.totalResistance > 0) found = g;
+      });
+      return sum + (found ? 1 / found.totalResistance : 0);
+    }, 0)) : 0;
+    selCardHtml = '<div class="card selection-card" style="grid-column: span 2;"><div class="value" style="color:' + currentGradient(selTotalI) + '">⚡ ' + selCount + ' selected — Total I: ' + totalIStr + '</div><div class="label">Parallel R: ' + (parallelR * 1000).toFixed(2) + ' mΩ | Total L: ' + selTotalLen.toFixed(1) + ' mm</div><div class="sel-details">' + selDetailsHtml + '</div></div>';
+  }
+
+  document.getElementById('summary-cards').innerHTML =
+    '<div class="card"><div class="value">' + groups.length + '</div><div class="label">Groups</div></div>' +
+    '<div class="card"><div class="value">' + Object.keys(nets).length + '</div><div class="label">Nets</div></div>' +
+    '<div class="card"><div class="value" style="color:' + (minI !== '-' ? currentGradient(parseFloat(minI)) : 'var(--fg2)') + '">' + minI + 'A</div><div class="label">Min I max</div></div>' +
+    '<div class="card"><div class="value" style="color:' + (maxI !== '-' ? currentGradient(parseFloat(maxI)) : 'var(--fg2)') + '">' + maxI + 'A</div><div class="label">Max I max</div></div>' +
+    '<div class="card"><div class="value" style="color:var(--accent)">' + avgI + 'A</div><div class="label">Avg I max</div></div>' +
+    '<div class="card"><div class="value">' + totalLen.toFixed(1) + '</div><div class="label">Total Length (mm)</div></div>' +
+    selCardHtml;
+}
+
+function renderTable() {
+  var groups = getFilteredGroups();
+  var deltaT = parseFloat(document.getElementById('delta-t').value) || 10;
+
+  // Sort
+  groups.sort(function(a, b) {
+    var va, vb;
+    switch(sortColumn) {
+      case 'net': va = a.net; vb = b.net; return sortAsc ? (va < vb ? -1 : va > vb ? 1 : 0) : (vb < va ? -1 : vb > va ? 1 : 0);
+      case 'layer': va = a.layer; vb = b.layer; break;
+      case 'width': va = a.width; vb = b.width; break;
+      case 'length': va = a.totalLength; vb = b.totalLength; break;
+      case 'segs': va = a.count; vb = b.count; break;
+      case 'area': va = a.areaMil2; vb = b.areaMil2; break;
+      case 'imax': va = a.iMax; vb = b.iMax; break;
+      case 'resist': va = a.totalResistance; vb = b.totalResistance; break;
+      case 'vdrop': va = a.iMax * a.totalResistance; vb = b.iMax * b.totalResistance; break;
+      default: va = a.iMax; vb = b.iMax;
+    }
+    return sortAsc ? va - vb : vb - va;
+  });
+
+  var html = '';
+  groups.forEach(function(g) {
+    var gKey = g.net + '|' + g.layer + '|' + g.type + '|' + (Math.round(g.width * 1000) / 1000);
+    var iColor = currentGradient(g.iMax);
+    var vDrop = g.iMax * g.totalResistance;
+    var checked = selectedRows[gKey] ? ' checked' : '';
+    var rowCls = selectedRows[gKey] ? ' class="selected-row"' : '';
+    html += '<tr' + rowCls + ' data-key="' + esc(gKey) + '">' +
+      '<td style="text-align:center"><input type="checkbox" class="row-chk"' + checked + '></td>' +
+      '<td><strong>' + esc(g.net) + '</strong></td>' +
+      '<td>' + esc(g.layerName) + '</td>' +
+      '<td style="text-align:center">' + g.width.toFixed(3) + '</td>' +
+      '<td style="text-align:center">' + g.totalLength.toFixed(2) + '</td>' +
+      '<td style="text-align:center;color:var(--fg2)">' + g.count + '</td>' +
+      '<td style="text-align:center">' + g.areaMil2.toFixed(1) + '</td>' +
+      '<td style="text-align:center;font-weight:700;color:' + iColor + '">' + g.iMax.toFixed(2) + ' A</td>' +
+      '<td style="text-align:center">' + (g.totalResistance * 1000).toFixed(1) + '</td>' +
+      '<td style="text-align:center;color:' + (vDrop > 0.1 ? 'var(--red)' : vDrop > 0.05 ? 'var(--orange)' : 'var(--green)') + '">' + (vDrop * 1000).toFixed(1) + ' mV</td>' +
+      '<td style="font-size:10px;color:var(--fg2)">' + g.position + '</td>' +
+      '</tr>';
+  });
+  document.getElementById('results-table').innerHTML = html;
+
+  // Update select-all checkbox state
+  var allChks = document.querySelectorAll('.row-chk');
+  var chkAll = document.getElementById('chk-select-all');
+  if (allChks.length > 0) {
+    var checkedCount = 0;
+    allChks.forEach(function(c) { if (c.checked) checkedCount++; });
+    chkAll.checked = checkedCount === allChks.length;
+    chkAll.indeterminate = checkedCount > 0 && checkedCount < allChks.length;
+  }
+}
+
+function renderNetSummary() {
+  var ns = analysisData.netSummary;
+  var keys = Object.keys(ns).sort(function(a, b) { return ns[a].minIMax - ns[b].minIMax; });
+  var html = '';
+  keys.forEach(function(key) {
+    var n = ns[key];
+    var iStr = n.minIMax === Infinity ? '-' : n.minIMax.toFixed(2) + 'A';
+    html += '<div class="sb-row">' +
+      '<span class="net-name" title="' + esc(key) + '">' + esc(key) + '</span>' +
+      '<span class="current-badge" style="background:' + currentGradient(n.minIMax) + '">' + iStr + '</span>' +
+      '</div>';
+  });
+  document.getElementById('net-summary').innerHTML = html;
+}
+
+function populateFilters() {
+  var layers = {};
+  analysisData.results.forEach(function(r) { layers[r.layer] = r.layerName; });
+  var laySel = document.getElementById('layer-filter');
+  laySel.innerHTML = '<option value="__all__">All layers</option>';
+  Object.keys(layers).sort(function(a, b) { return Number(a) - Number(b); }).forEach(function(l) {
+    laySel.innerHTML += '<option value="' + l + '">' + esc(layers[l]) + '</option>';
+  });
+}
+
+// ═══════════════════════════════════════
+// Events
+// ═══════════════════════════════════════
+
+// Row checkbox click (delegated)
+document.getElementById('results-table').addEventListener('change', function(e) {
+  if (!e.target.classList.contains('row-chk')) return;
+  var tr = e.target.closest('tr');
+  if (!tr) return;
+  var key = tr.getAttribute('data-key');
+  if (e.target.checked) {
+    selectedRows[key] = true;
+    tr.classList.add('selected-row');
+  } else {
+    delete selectedRows[key];
+    tr.classList.remove('selected-row');
+  }
+  renderSummaryCards();
+  // Update select-all state
+  var allChks = document.querySelectorAll('.row-chk');
+  var checkedCount = 0;
+  allChks.forEach(function(c) { if (c.checked) checkedCount++; });
+  var chkAll = document.getElementById('chk-select-all');
+  chkAll.checked = checkedCount === allChks.length;
+  chkAll.indeterminate = checkedCount > 0 && checkedCount < allChks.length;
+});
+
+// Select all checkbox
+document.getElementById('chk-select-all').addEventListener('change', function() {
+  var checked = this.checked;
+  var groups = getFilteredGroups();
+  groups.forEach(function(g) {
+    var gKey = g.net + '|' + g.layer + '|' + g.type + '|' + (Math.round(g.width * 1000) / 1000);
+    if (checked) selectedRows[gKey] = true;
+    else delete selectedRows[gKey];
+  });
+  document.querySelectorAll('.row-chk').forEach(function(c) { c.checked = checked; });
+  document.querySelectorAll('#results-table tr').forEach(function(tr) {
+    if (checked) tr.classList.add('selected-row');
+    else tr.classList.remove('selected-row');
+  });
+  renderSummaryCards();
+});
+
+document.getElementById('layer-filter').addEventListener('change', renderAll);
+
+var _searchTimer = null;
+document.getElementById('search-box').addEventListener('input', function() {
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(renderAll, 250);
+});
+
+document.getElementById('delta-t').addEventListener('change', function() {
+  analyzeCurrentCapacity();
+  renderAll();
+});
+document.getElementById('ambient-t').addEventListener('change', function() {
+  analyzeCurrentCapacity();
+  renderAll();
+});
+
+document.getElementById('btn-manual-load').addEventListener('click', loadPCBData);
+
+// Zones checkbox
+document.getElementById('chk-show-zones').addEventListener('change', function() {
+  renderAll();
+});
+
+// Table header sort
+document.querySelectorAll('th[data-sort]').forEach(function(th) {
+  th.addEventListener('click', function() {
+    var col = this.getAttribute('data-sort');
+    if (sortColumn === col) sortAsc = !sortAsc;
+    else { sortColumn = col; sortAsc = true; }
+    renderTable();
+  });
+});
+
+// Settings
+document.getElementById('btn-settings').addEventListener('click', function() {
+  document.getElementById('cfg-outer-cu').value = currentStackup.outerCopperOz || (currentStackup.outerCopperMm / OZ_TO_MM);
+  document.getElementById('cfg-inner-cu').value = currentStackup.innerCopperOz || (currentStackup.innerCopperMm / OZ_TO_MM);
+  document.getElementById('settings-panel').classList.add('visible');
+  document.getElementById('overlay').classList.add('visible');
+});
+
+function closeSettings() {
+  document.getElementById('settings-panel').classList.remove('visible');
+  document.getElementById('overlay').classList.remove('visible');
+}
+
+document.getElementById('overlay').addEventListener('click', closeSettings);
+document.getElementById('btn-cancel-settings').addEventListener('click', closeSettings);
+
+document.getElementById('btn-save-settings').addEventListener('click', function() {
+  currentStackup.outerCopperOz = parseFloat(document.getElementById('cfg-outer-cu').value) || 1;
+  currentStackup.innerCopperOz = parseFloat(document.getElementById('cfg-inner-cu').value) || 0.5;
+  currentStackup.outerCopperMm = currentStackup.outerCopperOz * OZ_TO_MM;
+  currentStackup.innerCopperMm = currentStackup.innerCopperOz * OZ_TO_MM;
+  closeSettings();
+  // Save
+  try { eda.sys_Storage.setExtensionUserConfig(STACKUP_STORAGE_KEY, currentStackup); } catch(e) {}
+  // Recalculate
+  analyzeCurrentCapacity();
+  renderAll();
+});
+
+// Export CSV
+document.getElementById('btn-export').addEventListener('click', function() {
+  if (!analysisData) return;
+  var csv = 'Net,Layer,Width(mm),Length(mm),Segments,Area(mil2),Imax(A),R(mOhm),Vdrop(mV),Position\n';
+  analysisData.results.forEach(function(g) {
+    var vDrop = g.iMax * g.totalResistance;
+    csv += '"' + g.net + '",' + g.layerName + ',' + g.width.toFixed(3) + ',' + g.totalLength.toFixed(2) + ',' + g.count + ',' + g.areaMil2.toFixed(1) + ',' + g.iMax.toFixed(2) + ',' + (g.totalResistance * 1000).toFixed(1) + ',' + (vDrop * 1000).toFixed(1) + ',' + g.position + '\n';
+  });
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  var link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'trace_current_capacity.csv';
+  link.click();
+});
+
+// Debug Pour
+document.getElementById('btn-debug').addEventListener('click', function() {
+  var dbgApis = pcbData._debugApis || {};
+  var bOD = dbgApis.boardOutlineDebug || {};
+  var content = '=== Board Outline & Pour Debug ===\n\n';
+
+  // pointInPolygon helper
+  function pip(px, py, pts) {
+    var inside = false;
+    for (var i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      var xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+      if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) inside = !inside;
+    }
+    return inside;
+  }
+
+  // ── Layers info ──
+  content += '── All API Layers ──\n';
+  var apiNames = pcbData.apiLayerNames || {};
+  var copperIds = pcbData.copperLayerIds || {};
+  var layerKeys = Object.keys(apiNames).sort(function(a, b) { return Number(a) - Number(b); });
+  content += 'Total layers from API: ' + layerKeys.length + '\n';
+  content += 'Copper layer count: ' + (pcbData.copperLayerCount || '?') + '\n';
+  content += 'Copper layer IDs: ' + Object.keys(copperIds).sort(function(a, b) { return Number(a) - Number(b); }).join(', ') + '\n\n';
+
+  // Count primitives per layer
+  var linesByLayer = {}, arcsByLayer = {}, zonesByLayer = {}, padsByLayer = {};
+  (pcbData.lines || []).forEach(function(l) {
+    linesByLayer[l.layer] = (linesByLayer[l.layer] || 0) + 1;
+  });
+  (pcbData.arcs || []).forEach(function(a) {
+    arcsByLayer[a.layer] = (arcsByLayer[a.layer] || 0) + 1;
+  });
+  (pcbData.zones || []).forEach(function(z) {
+    zonesByLayer[z.layer] = (zonesByLayer[z.layer] || 0) + 1;
+  });
+  (pcbData.pads || []).forEach(function(p) {
+    padsByLayer[p.layer] = (padsByLayer[p.layer] || 0) + 1;
+  });
+
+  content += 'ID   | Name                     | Copper | Lines | Arcs | Zones | Pads\n';
+  content += '-----|--------------------------|--------|-------|------|-------|-----\n';
+  layerKeys.forEach(function(lid) {
+    var name = apiNames[lid] || '?';
+    var isCu = copperIds[lid] ? 'YES' : '-';
+    var nLines = linesByLayer[lid] || 0;
+    var nArcs = arcsByLayer[lid] || 0;
+    var nZones = zonesByLayer[lid] || 0;
+    var nPads = padsByLayer[lid] || 0;
+    content += String(lid).padEnd(5) + '| ' + name.padEnd(25) + '| ' + isCu.padEnd(7) + '| ' +
+      String(nLines).padEnd(6) + '| ' + String(nArcs).padEnd(5) + '| ' + String(nZones).padEnd(6) + '| ' + nPads + '\n';
+  });
+
+  // Also show layers with primitives that are NOT in apiLayerNames
+  var allPrimLayers = {};
+  Object.keys(linesByLayer).forEach(function(k) { allPrimLayers[k] = true; });
+  Object.keys(arcsByLayer).forEach(function(k) { allPrimLayers[k] = true; });
+  Object.keys(zonesByLayer).forEach(function(k) { allPrimLayers[k] = true; });
+  Object.keys(padsByLayer).forEach(function(k) { allPrimLayers[k] = true; });
+  var missingLayers = Object.keys(allPrimLayers).filter(function(k) { return !apiNames[k]; });
+  if (missingLayers.length > 0) {
+    content += '\nLayers with primitives but NOT in API layer list:\n';
+    missingLayers.sort(function(a,b) { return Number(a) - Number(b); }).forEach(function(lid) {
+      content += '  Layer ' + lid + ': Lines=' + (linesByLayer[lid]||0) + ' Arcs=' + (arcsByLayer[lid]||0) +
+        ' Zones=' + (zonesByLayer[lid]||0) + ' Pads=' + (padsByLayer[lid]||0) + '\n';
+    });
+  }
+
+  content += '\n── Vias ──\n';
+  content += 'Total: ' + (pcbData.vias || []).length + '\n';
+
+  content += '\n';
+
+  // Board outline
+  content += '── Board Outline ──\n';
+  content += 'Layer: ' + (bOD.detectedLayer || 'none') + ' (' + (bOD.detectedLayerName || '?') + ')\n';
+  content += 'Method: ' + (bOD.method || 'none') + '\n';
+  if (pcbData.boardOutline && pcbData.boardOutline.length > 0) {
+    var pts = pcbData.boardOutline;
+    var bMinX = Infinity, bMinY = Infinity, bMaxX = -Infinity, bMaxY = -Infinity;
+    for (var i = 0; i < pts.length; i++) {
+      if (pts[i].x < bMinX) bMinX = pts[i].x; if (pts[i].x > bMaxX) bMaxX = pts[i].x;
+      if (pts[i].y < bMinY) bMinY = pts[i].y; if (pts[i].y > bMaxY) bMaxY = pts[i].y;
+    }
+    content += 'Board size: ' + (bMaxX - bMinX).toFixed(2) + 'mm x ' + (bMaxY - bMinY).toFixed(2) + 'mm\n';
+  } else {
+    content += 'No board outline detected.\n';
+  }
+
+  // Vias summary
+  var allVias = pcbData.vias || [];
+  content += '\n── Vias ──\n';
+  content += 'Total: ' + allVias.length + '\n';
+  var viasByNet = {};
+  allVias.forEach(function(v) {
+    if (!viasByNet[v.net]) viasByNet[v.net] = [];
+    viasByNet[v.net].push(v);
+  });
+  for (var vn in viasByNet) {
+    content += '  ' + (vn || '(no net)') + ': ' + viasByNet[vn].length + ' vias, hole=' + viasByNet[vn][0].holeDiameter.toFixed(2) + 'mm\n';
+  }
+
+  // Pads with holes summary
+  var allPads = pcbData.pads || [];
+  var padsWithHole = allPads.filter(function(p) { return p.hole && p.hole.width > 0; });
+  var padsMultiLayer = allPads.filter(function(p) { return p.layer === 12; });
+  content += '\n── Pads ──\n';
+  content += 'Total: ' + allPads.length + '\n';
+  content += 'With hole (THT): ' + padsWithHole.length + '\n';
+  content += 'On Multi-Layer (12): ' + padsMultiLayer.length + '\n';
+  if (padsWithHole.length > 0) {
+    content += 'Sample THT pad: id=' + padsWithHole[0].id + ' net=' + padsWithHole[0].net +
+      ' layer=' + padsWithHole[0].layer +
+      ' hole=' + padsWithHole[0].hole.width.toFixed(2) + 'x' + padsWithHole[0].hole.height.toFixed(2) + 'mm' +
+      ' pad=' + padsWithHole[0].padWidth.toFixed(2) + 'x' + padsWithHole[0].padHeight.toFixed(2) + 'mm\n';
+  }
+
+  // Analyze holes inside each pour
+  content += '\n── Holes Inside Pours ──\n';
+  var zones = pcbData.zones || [];
+  // Only show first 4 unique net+layer combos for brevity
+  var shownCombos = {};
+  for (var zi = 0; zi < zones.length; zi++) {
+    var z = zones[zi];
+    if (!z.outlinePoints || z.outlinePoints.length < 3) continue;
+    var comboKey = z.net + '|' + z.layer;
+    if (shownCombos[comboKey]) continue;
+    shownCombos[comboKey] = true;
+
+    content += '\nPour ' + z.id + ' (' + z.net + ', L' + z.layer + '):\n';
+
+    // Vias inside this pour with different net
+    var viasInPour = 0, viasOtherNet = 0;
+    var viaSamples = [];
+    allVias.forEach(function(v) {
+      if (pip(v.x, v.y, z.outlinePoints)) {
+        viasInPour++;
+        if (v.net !== z.net) {
+          viasOtherNet++;
+          if (viaSamples.length < 3) {
+            viaSamples.push('    via ' + v.id + ' net=' + v.net + ' hole=' + v.holeDiameter.toFixed(2) + 'mm @ (' + v.x.toFixed(1) + ',' + v.y.toFixed(1) + ')');
+          }
+        }
+      }
+    });
+    content += '  Vias inside: ' + viasInPour + ', other net: ' + viasOtherNet + '\n';
+    viaSamples.forEach(function(s) { content += s + '\n'; });
+
+    // THT Pads inside this pour with different net
+    var padsInPour = 0, padsOtherNet = 0;
+    var padSamples = [];
+    padsWithHole.forEach(function(p) {
+      if (pip(p.x, p.y, z.outlinePoints)) {
+        padsInPour++;
+        if (p.net !== z.net) {
+          padsOtherNet++;
+          if (padSamples.length < 3) {
+            padSamples.push('    pad ' + p.id + ' net=' + p.net + ' hole=' + p.hole.width.toFixed(2) + 'x' + p.hole.height.toFixed(2) + 'mm L' + p.layer + ' @ (' + p.x.toFixed(1) + ',' + p.y.toFixed(1) + ')');
+          }
+        }
+      }
+    });
+    content += '  THT Pads inside: ' + padsInPour + ', other net: ' + padsOtherNet + '\n';
+    padSamples.forEach(function(s) { content += s + '\n'; });
+
+    // Multi-layer pads (SMD on layer 12)
+    var mlPadsInPour = 0, mlPadsOtherNet = 0;
+    padsMultiLayer.forEach(function(p) {
+      if (pip(p.x, p.y, z.outlinePoints)) {
+        mlPadsInPour++;
+        if (p.net !== z.net) mlPadsOtherNet++;
+      }
+    });
+    if (mlPadsInPour > 0) {
+      content += '  Multi-Layer pads inside: ' + mlPadsInPour + ', other net: ' + mlPadsOtherNet + '\n';
+    }
+  }
+
+  // Modal
+  var modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
+  var box = document.createElement('div');
+  box.style.cssText = 'background:#1e1e2e;color:#cdd6f4;padding:20px;border-radius:8px;max-width:90vw;max-height:90vh;overflow:auto;font-family:monospace;font-size:12px;white-space:pre-wrap;';
+  var closeBtn = document.createElement('button');
+  closeBtn.textContent = '✕ Close';
+  closeBtn.style.cssText = 'position:sticky;top:0;float:right;background:#e63946;color:#fff;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;';
+  closeBtn.onclick = function() { document.body.removeChild(modal); };
+  var copyBtn = document.createElement('button');
+  copyBtn.textContent = '📋 Copy';
+  copyBtn.style.cssText = 'position:sticky;top:0;float:right;background:#4361ee;color:#fff;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;margin-right:8px;';
+  copyBtn.onclick = function() { navigator.clipboard.writeText(content); copyBtn.textContent = '✓ Copied'; };
+  box.appendChild(closeBtn);
+  box.appendChild(copyBtn);
+  box.appendChild(document.createTextNode(content));
+  modal.appendChild(box);
+  modal.onclick = function(e) { if (e.target === modal) document.body.removeChild(modal); };
+  document.body.appendChild(modal);
+});
+
+// Visualize
+document.getElementById('btn-viz').addEventListener('click', async function() {
+  try {
+    await eda.sys_Storage.setExtensionUserConfig(VIZ_STORAGE_KEY, {
+      pcbData: pcbData,
+      analysisData: analysisData,
+      stackup: currentStackup,
+      deltaT: parseFloat(document.getElementById('delta-t').value) || 10
+    });
+    eda.sys_IFrame.openIFrame(
+      '/iframe/current-viz.html',
+      1200, 800,
+      'trace-current-viz',
+      { maximizeButton: true, minimizeButton: true, title: 'Current Capacity Visualization' }
+    );
+  } catch(e) {
+    setStatus('Error: ' + (e.message || e));
+  }
+});
+
+// ═══════════════════════════════════════
+// Utilities
+// ═══════════════════════════════════════
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function setStatus(msg) {
+  document.getElementById('status').textContent = msg;
+}
+</script>
+</body>
+</html>
