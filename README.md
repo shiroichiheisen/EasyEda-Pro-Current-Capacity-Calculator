@@ -65,6 +65,11 @@ easyeda-current-capacity/
 4. Click **Visualize** to open the heatmap
 
 ## Changelog
+### v1.9.1
+- **Color scale update** — replaced red/dark-red tones with purple/magenta gradient for low-current areas. Red implied a problem, but low current capacity is not inherently bad.
+- **Loading overlay** — spinner with "Loading PCB data…" while the visualization canvas processes data, preventing a blank white screen.
+- **Removed debug buttons** — debug export buttons removed from both the main UI and the canvas visualization.
+
 ### v1.9.0
 - **Board outline clipping for Fills** — `pcb_PrimitiveFill` is now clipped to the board outline (Sutherland-Hodgman), same as Pours. Fills that extended beyond the board (raw API coordinates) now appear at the correct size.
 - **Arc width fix** — the `pcb_PrimitiveArc.lineWidth` API returns a default value (10 mil) for all arcs. Implemented width inheritance: arcs inherit the width from the connected line segment (same net/layer, endpoint with 5µm snap). A second pass propagates to chained arcs (arc→arc→line).

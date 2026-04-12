@@ -87,7 +87,6 @@ th input[type=checkbox] { cursor: pointer; }
   <button id="btn-export" class="secondary hidden">📋 CSV</button>
   <button id="btn-viz" class="hidden" style="background:#7209b7;">🎨 Visualize</button>
   <label class="hidden" id="lbl-chk-zones" style="font-size:11px;color:var(--fg2);margin-left:6px;cursor:pointer;"><input type="checkbox" id="chk-show-zones"> Zones</label>
-  <button id="btn-debug" class="hidden" style="background:#e63946;font-size:11px;">🔍 Debug Pour</button>
   <div class="spacer"></div>
   <span class="status" id="status">Waiting for data...</span>
 </div>
@@ -147,20 +146,6 @@ th input[type=checkbox] { cursor: pointer; }
   <div class="actions">
     <button class="secondary" id="btn-cancel-settings">Cancel</button>
     <button id="btn-save-settings">Apply</button>
-  </div>
-</div>
-
-<!-- Debug Modal -->
-<div class="overlay" id="debug-overlay"></div>
-<div class="settings-panel" id="debug-panel" style="width:700px;max-height:85vh;">
-  <h2>🐛 Debug — Raw Extracted Data</h2>
-  <div style="margin-bottom:8px;font-size:11px;color:var(--fg2);">
-    <span id="debug-summary"></span>
-  </div>
-  <textarea id="debug-json" readonly style="width:100%;height:55vh;font-family:Consolas,'Courier New',monospace;font-size:11px;background:var(--input-bg);color:var(--input-fg);border:1px solid var(--border);border-radius:4px;padding:8px;resize:vertical;white-space:pre;tab-size:2;"></textarea>
-  <div class="actions">
-    <button class="secondary" id="btn-debug-copy">📋 Copy</button>
-    <button id="btn-debug-close">Close</button>
   </div>
 </div>
 
@@ -228,7 +213,7 @@ function onDataLoaded(data) {
   pcbData = data;
   analyzeCurrentCapacity();
 
-  ['layer-filter','search-box','btn-settings','btn-export','btn-viz','btn-debug','delta-t','ambient-t','lbl-dt','lbl-dt-unit','lbl-amb','lbl-amb-unit','lbl-chk-zones'].forEach(function(id) {
+  ['layer-filter','search-box','btn-settings','btn-export','btn-viz','delta-t','ambient-t','lbl-dt','lbl-dt-unit','lbl-amb','lbl-amb-unit','lbl-chk-zones'].forEach(function(id) {
     document.getElementById(id).classList.remove('hidden');
   });
   document.getElementById('sidebar').classList.remove('hidden');
@@ -787,205 +772,6 @@ document.getElementById('btn-export').addEventListener('click', function() {
   link.href = URL.createObjectURL(blob);
   link.download = 'trace_current_capacity.csv';
   link.click();
-});
-
-// Debug Pour
-document.getElementById('btn-debug').addEventListener('click', function() {
-  var dbgApis = pcbData._debugApis || {};
-  var bOD = dbgApis.boardOutlineDebug || {};
-  var content = '=== Board Outline & Pour Debug ===\n\n';
-
-  // pointInPolygon helper
-  function pip(px, py, pts) {
-    var inside = false;
-    for (var i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-      var xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
-      if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) inside = !inside;
-    }
-    return inside;
-  }
-
-  // ── Layers info ──
-  content += '── All API Layers ──\n';
-  var apiNames = pcbData.apiLayerNames || {};
-  var copperIds = pcbData.copperLayerIds || {};
-  var layerKeys = Object.keys(apiNames).sort(function(a, b) { return Number(a) - Number(b); });
-  content += 'Total layers from API: ' + layerKeys.length + '\n';
-  content += 'Copper layer count: ' + (pcbData.copperLayerCount || '?') + '\n';
-  content += 'Copper layer IDs: ' + Object.keys(copperIds).sort(function(a, b) { return Number(a) - Number(b); }).join(', ') + '\n\n';
-
-  // Count primitives per layer
-  var linesByLayer = {}, arcsByLayer = {}, zonesByLayer = {}, padsByLayer = {};
-  (pcbData.lines || []).forEach(function(l) {
-    linesByLayer[l.layer] = (linesByLayer[l.layer] || 0) + 1;
-  });
-  (pcbData.arcs || []).forEach(function(a) {
-    arcsByLayer[a.layer] = (arcsByLayer[a.layer] || 0) + 1;
-  });
-  (pcbData.zones || []).forEach(function(z) {
-    zonesByLayer[z.layer] = (zonesByLayer[z.layer] || 0) + 1;
-  });
-  (pcbData.pads || []).forEach(function(p) {
-    padsByLayer[p.layer] = (padsByLayer[p.layer] || 0) + 1;
-  });
-
-  content += 'ID   | Name                     | Copper | Lines | Arcs | Zones | Pads\n';
-  content += '-----|--------------------------|--------|-------|------|-------|-----\n';
-  layerKeys.forEach(function(lid) {
-    var name = apiNames[lid] || '?';
-    var isCu = copperIds[lid] ? 'YES' : '-';
-    var nLines = linesByLayer[lid] || 0;
-    var nArcs = arcsByLayer[lid] || 0;
-    var nZones = zonesByLayer[lid] || 0;
-    var nPads = padsByLayer[lid] || 0;
-    content += String(lid).padEnd(5) + '| ' + name.padEnd(25) + '| ' + isCu.padEnd(7) + '| ' +
-      String(nLines).padEnd(6) + '| ' + String(nArcs).padEnd(5) + '| ' + String(nZones).padEnd(6) + '| ' + nPads + '\n';
-  });
-
-  // Also show layers with primitives that are NOT in apiLayerNames
-  var allPrimLayers = {};
-  Object.keys(linesByLayer).forEach(function(k) { allPrimLayers[k] = true; });
-  Object.keys(arcsByLayer).forEach(function(k) { allPrimLayers[k] = true; });
-  Object.keys(zonesByLayer).forEach(function(k) { allPrimLayers[k] = true; });
-  Object.keys(padsByLayer).forEach(function(k) { allPrimLayers[k] = true; });
-  var missingLayers = Object.keys(allPrimLayers).filter(function(k) { return !apiNames[k]; });
-  if (missingLayers.length > 0) {
-    content += '\nLayers with primitives but NOT in API layer list:\n';
-    missingLayers.sort(function(a,b) { return Number(a) - Number(b); }).forEach(function(lid) {
-      content += '  Layer ' + lid + ': Lines=' + (linesByLayer[lid]||0) + ' Arcs=' + (arcsByLayer[lid]||0) +
-        ' Zones=' + (zonesByLayer[lid]||0) + ' Pads=' + (padsByLayer[lid]||0) + '\n';
-    });
-  }
-
-  content += '\n── Vias ──\n';
-  content += 'Total: ' + (pcbData.vias || []).length + '\n';
-
-  content += '\n';
-
-  // Board outline
-  content += '── Board Outline ──\n';
-  content += 'Layer: ' + (bOD.detectedLayer || 'none') + ' (' + (bOD.detectedLayerName || '?') + ')\n';
-  content += 'Method: ' + (bOD.method || 'none') + '\n';
-  if (pcbData.boardOutline && pcbData.boardOutline.length > 0) {
-    var pts = pcbData.boardOutline;
-    var bMinX = Infinity, bMinY = Infinity, bMaxX = -Infinity, bMaxY = -Infinity;
-    for (var i = 0; i < pts.length; i++) {
-      if (pts[i].x < bMinX) bMinX = pts[i].x; if (pts[i].x > bMaxX) bMaxX = pts[i].x;
-      if (pts[i].y < bMinY) bMinY = pts[i].y; if (pts[i].y > bMaxY) bMaxY = pts[i].y;
-    }
-    content += 'Board size: ' + (bMaxX - bMinX).toFixed(2) + 'mm x ' + (bMaxY - bMinY).toFixed(2) + 'mm\n';
-  } else {
-    content += 'No board outline detected.\n';
-  }
-
-  // Vias summary
-  var allVias = pcbData.vias || [];
-  content += '\n── Vias ──\n';
-  content += 'Total: ' + allVias.length + '\n';
-  var viasByNet = {};
-  allVias.forEach(function(v) {
-    if (!viasByNet[v.net]) viasByNet[v.net] = [];
-    viasByNet[v.net].push(v);
-  });
-  for (var vn in viasByNet) {
-    content += '  ' + (vn || '(no net)') + ': ' + viasByNet[vn].length + ' vias, hole=' + viasByNet[vn][0].holeDiameter.toFixed(2) + 'mm\n';
-  }
-
-  // Pads with holes summary
-  var allPads = pcbData.pads || [];
-  var padsWithHole = allPads.filter(function(p) { return p.hole && p.hole.width > 0; });
-  var padsMultiLayer = allPads.filter(function(p) { return p.layer === 12; });
-  content += '\n── Pads ──\n';
-  content += 'Total: ' + allPads.length + '\n';
-  content += 'With hole (THT): ' + padsWithHole.length + '\n';
-  content += 'On Multi-Layer (12): ' + padsMultiLayer.length + '\n';
-  if (padsWithHole.length > 0) {
-    content += 'Sample THT pad: id=' + padsWithHole[0].id + ' net=' + padsWithHole[0].net +
-      ' layer=' + padsWithHole[0].layer +
-      ' hole=' + padsWithHole[0].hole.width.toFixed(2) + 'x' + padsWithHole[0].hole.height.toFixed(2) + 'mm' +
-      ' pad=' + padsWithHole[0].padWidth.toFixed(2) + 'x' + padsWithHole[0].padHeight.toFixed(2) + 'mm\n';
-  }
-
-  // Analyze holes inside each pour
-  content += '\n── Holes Inside Pours ──\n';
-  var zones = pcbData.zones || [];
-  // Only show first 4 unique net+layer combos for brevity
-  var shownCombos = {};
-  for (var zi = 0; zi < zones.length; zi++) {
-    var z = zones[zi];
-    if (!z.outlinePoints || z.outlinePoints.length < 3) continue;
-    var comboKey = z.net + '|' + z.layer;
-    if (shownCombos[comboKey]) continue;
-    shownCombos[comboKey] = true;
-
-    content += '\nPour ' + z.id + ' (' + z.net + ', L' + z.layer + '):\n';
-
-    // Vias inside this pour with different net
-    var viasInPour = 0, viasOtherNet = 0;
-    var viaSamples = [];
-    allVias.forEach(function(v) {
-      if (pip(v.x, v.y, z.outlinePoints)) {
-        viasInPour++;
-        if (v.net !== z.net) {
-          viasOtherNet++;
-          if (viaSamples.length < 3) {
-            viaSamples.push('    via ' + v.id + ' net=' + v.net + ' hole=' + v.holeDiameter.toFixed(2) + 'mm @ (' + v.x.toFixed(1) + ',' + v.y.toFixed(1) + ')');
-          }
-        }
-      }
-    });
-    content += '  Vias inside: ' + viasInPour + ', other net: ' + viasOtherNet + '\n';
-    viaSamples.forEach(function(s) { content += s + '\n'; });
-
-    // THT Pads inside this pour with different net
-    var padsInPour = 0, padsOtherNet = 0;
-    var padSamples = [];
-    padsWithHole.forEach(function(p) {
-      if (pip(p.x, p.y, z.outlinePoints)) {
-        padsInPour++;
-        if (p.net !== z.net) {
-          padsOtherNet++;
-          if (padSamples.length < 3) {
-            padSamples.push('    pad ' + p.id + ' net=' + p.net + ' hole=' + p.hole.width.toFixed(2) + 'x' + p.hole.height.toFixed(2) + 'mm L' + p.layer + ' @ (' + p.x.toFixed(1) + ',' + p.y.toFixed(1) + ')');
-          }
-        }
-      }
-    });
-    content += '  THT Pads inside: ' + padsInPour + ', other net: ' + padsOtherNet + '\n';
-    padSamples.forEach(function(s) { content += s + '\n'; });
-
-    // Multi-layer pads (SMD on layer 12)
-    var mlPadsInPour = 0, mlPadsOtherNet = 0;
-    padsMultiLayer.forEach(function(p) {
-      if (pip(p.x, p.y, z.outlinePoints)) {
-        mlPadsInPour++;
-        if (p.net !== z.net) mlPadsOtherNet++;
-      }
-    });
-    if (mlPadsInPour > 0) {
-      content += '  Multi-Layer pads inside: ' + mlPadsInPour + ', other net: ' + mlPadsOtherNet + '\n';
-    }
-  }
-
-  // Modal
-  var modal = document.createElement('div');
-  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
-  var box = document.createElement('div');
-  box.style.cssText = 'background:#1e1e2e;color:#cdd6f4;padding:20px;border-radius:8px;max-width:90vw;max-height:90vh;overflow:auto;font-family:monospace;font-size:12px;white-space:pre-wrap;';
-  var closeBtn = document.createElement('button');
-  closeBtn.textContent = '✕ Close';
-  closeBtn.style.cssText = 'position:sticky;top:0;float:right;background:#e63946;color:#fff;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;';
-  closeBtn.onclick = function() { document.body.removeChild(modal); };
-  var copyBtn = document.createElement('button');
-  copyBtn.textContent = '📋 Copy';
-  copyBtn.style.cssText = 'position:sticky;top:0;float:right;background:#4361ee;color:#fff;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;margin-right:8px;';
-  copyBtn.onclick = function() { navigator.clipboard.writeText(content); copyBtn.textContent = '✓ Copied'; };
-  box.appendChild(closeBtn);
-  box.appendChild(copyBtn);
-  box.appendChild(document.createTextNode(content));
-  modal.appendChild(box);
-  modal.onclick = function(e) { if (e.target === modal) document.body.removeChild(modal); };
-  document.body.appendChild(modal);
 });
 
 // Visualize

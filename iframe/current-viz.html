@@ -101,20 +101,7 @@ canvas { display: block; width: 100%; height: 100%; }
   <input type="number" id="trace-clearance" value="0.4" min="0" max="5" step="0.05" style="width:50px;">
   <label>mm</label>
   <div class="spacer"></div>
-  <button id="btn-debug-viz" class="secondary" style="background:#e63946;color:#fff;">🐛 Debug</button>
   <button id="btn-fit" class="secondary">⊞ Fit</button>
-</div>
-
-<!-- Debug Export Modal -->
-<div id="debug-viz-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;"></div>
-<div id="debug-viz-panel" style="display:none;position:fixed;top:5%;left:10%;right:10%;bottom:5%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;z-index:101;padding:16px;display:none;flex-direction:column;">
-  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-    <h2 style="font-size:14px;flex:1;">🐛 Debug — Viz Calculation Data</h2>
-    <button id="btn-dbgviz-copy" class="secondary" style="font-size:11px;">📋 Copy</button>
-    <button id="btn-dbgviz-download" class="secondary" style="font-size:11px;">💾 Download</button>
-    <button id="btn-dbgviz-close" style="font-size:11px;">Close</button>
-  </div>
-  <textarea id="debug-viz-json" readonly style="flex:1;width:100%;font-family:Consolas,'Courier New',monospace;font-size:11px;background:var(--input-bg);color:var(--input-fg);border:1px solid var(--border);border-radius:4px;padding:8px;resize:none;white-space:pre;tab-size:2;"></textarea>
 </div>
 
 <div class="canvas-wrap">
@@ -136,7 +123,7 @@ canvas { display: block; width: 100%; height: 100%; }
       <span>-</span>
     </div>
     <div style="margin-top:6px;font-size:10px;">
-      <span style="color:#F44336;">■</span> Low &nbsp;
+      <span style="color:#AB47BC;">■</span> Low &nbsp;
       <span style="color:#FF9800;">■</span> Medium &nbsp;
       <span style="color:#4CAF50;">■</span> High
     </div>
@@ -877,15 +864,15 @@ function iToColor(iMax) {
   var t = Math.sqrt(Math.max(0, Math.min(1, iMax / globalMaxI)));
   // 16-stop RGB colormap for maximum color differentiation
   var stops = [
-    [0.000,  60,   0,  20],
-    [0.067, 120,   5,  15],
-    [0.133, 175,  15,  15],
-    [0.200, 210,  50,  10],
-    [0.267, 230, 100,  10],
-    [0.333, 245, 150,  15],
-    [0.400, 250, 200,  30],
-    [0.467, 240, 235,  60],
-    [0.533, 200, 245,  80],
+    [0.000, 100,  20, 120],
+    [0.067, 140,  30, 140],
+    [0.133, 170,  45, 130],
+    [0.200, 200,  70, 100],
+    [0.267, 220, 110,  60],
+    [0.333, 235, 150,  30],
+    [0.400, 245, 190,  25],
+    [0.467, 240, 225,  50],
+    [0.533, 200, 240,  70],
     [0.600, 140, 225,  65],
     [0.667,  80, 200,  70],
     [0.733,  40, 180, 100],
@@ -1733,186 +1720,6 @@ function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ═══════════════════════════════════════
-// Debug Export
-// ═══════════════════════════════════════
-document.getElementById('btn-debug-viz').addEventListener('click', function() {
-  var dbg = {};
-  dbg.settings = {
-    deltaT: parseFloat(document.getElementById('delta-t').value),
-    calcMode: document.getElementById('calc-mode').value,
-    gridSize: parseInt(document.getElementById('grid-size').value),
-    clearance: parseFloat(document.getElementById('trace-clearance').value),
-    globalMaxI: globalMaxI
-  };
-  dbg.stackup = stackup;
-  dbg.copperLayerCount = pcbData.copperLayerCount;
-
-  // Zones — focused on pour-inside-pour diagnosis
-  dbg.zones = (pcbData.zones || []).map(function(z) {
-    var zg = zoneGrids[z.id];
-    var s = {
-      id: z.id, net: z.net, layer: z.layer,
-      layerName: (pcbData.apiLayerNames || {})[z.layer] || ('L' + z.layer),
-      bounds: z.bounds,
-      pts: z.outlinePoints || null,
-      holes: (z.holes || []).length,
-      traceObs: (z.traceObstacles || []).length,
-      padObs: (z.padObstacles || []).length,
-      iMap: currentMap[z.id]
-    };
-    if (zg) {
-      s.grid = {
-        cells: zg.cells.length,
-        siblings: zg.allPtsList ? zg.allPtsList.length - 1 : 0,
-        zoneObs: (zg.zoneObs || []).map(function(zo) {
-          return { net: zo.net, fullArea: zo.fullArea, bounds: zo.bounds };
-        })
-      };
-      // Only cells with lowest current (bottleneck cells)
-      if (zg.cells.length > 0) {
-        var sorted = zg.cells.slice().sort(function(a, b) { return a.iMax - b.iMax; });
-        s.grid.worstCells = sorted.slice(0, 5).map(function(c) {
-          return { gx: c.gx, gy: c.gy, wH: +c.widthH.toFixed(3), hV: +c.heightV.toFixed(3), effW: +c.effWidth.toFixed(3), iMax: +c.iMax.toFixed(3), segEff: +c.segEff.toFixed(3), segI: +c.segIMax.toFixed(3) };
-        });
-        var best = zg.cells.slice().sort(function(a, b) { return b.iMax - a.iMax; });
-        s.grid.bestCells = best.slice(0, 3).map(function(c) {
-          return { gx: c.gx, gy: c.gy, wH: +c.widthH.toFixed(3), hV: +c.heightV.toFixed(3), effW: +c.effWidth.toFixed(3), iMax: +c.iMax.toFixed(3) };
-        });
-      }
-    }
-    return s;
-  });
-
-  // Counts only
-  dbg.counts = {
-    lines: (pcbData.lines || []).length,
-    arcs: (pcbData.arcs || []).length,
-    vias: (pcbData.vias || []).length,
-    pads: (pcbData.pads || []).length,
-    smdPads: (pcbData.pads || []).filter(function(p) { return !p.hole || !p.hole.width; }).length,
-    thtPads: (pcbData.pads || []).filter(function(p) { return p.hole && p.hole.width > 0; }).length
-  };
-
-  // Width distribution: unique widths with count for lines and arcs
-  var lineWidths = {}, arcWidths = {};
-  (pcbData.lines || []).forEach(function(l) {
-    var w = +l.width.toFixed(4);
-    lineWidths[w] = (lineWidths[w] || 0) + 1;
-  });
-  (pcbData.arcs || []).forEach(function(a) {
-    var w = +a.width.toFixed(4);
-    arcWidths[w] = (arcWidths[w] || 0) + 1;
-  });
-  dbg.widthDistribution = { lineWidths: lineWidths, arcWidths: arcWidths };
-
-  // Arc width fix stats
-  if (pcbData._arcWidthFix) {
-    dbg.arcWidthFix = pcbData._arcWidthFix;
-  }
-
-  // Pad samples — first 5 SMD pads to verify dimensions
-  var smdPads = (pcbData.pads || []).filter(function(p) { return !p.hole || !p.hole.width; });
-  dbg.padSamples = smdPads.slice(0, 5).map(function(p) {
-    return { id: p.id, x: +p.x.toFixed(3), y: +p.y.toFixed(3), w: +p.padWidth.toFixed(3), h: +p.padHeight.toFixed(3), net: p.net, layer: p.layer };
-  });
-
-  // Arc samples — first 10 arcs to verify width
-  dbg.arcSamples = (pcbData.arcs || []).slice(0, 10).map(function(a) {
-    return {
-      id: a.id, net: a.net, layer: a.layer,
-      width: +a.width.toFixed(4),
-      arcAngle: a.arcAngle,
-      startX: +a.startX.toFixed(3), startY: +a.startY.toFixed(3),
-      endX: +a.endX.toFixed(3), endY: +a.endY.toFixed(3),
-      segs: a.arcSegments ? a.arcSegments.length : 0,
-      iMax: currentMap[a.id] !== undefined ? +currentMap[a.id].toFixed(3) : null
-    };
-  });
-
-  // Line samples — first 5 lines for comparison
-  dbg.lineSamples = (pcbData.lines || []).slice(0, 5).map(function(l) {
-    return {
-      id: l.id, net: l.net, layer: l.layer,
-      width: +l.width.toFixed(4),
-      iMax: currentMap[l.id] !== undefined ? +currentMap[l.id].toFixed(3) : null
-    };
-  });
-
-  // Raw API sample data — dump ALL properties for diagnosis
-  if (pcbData._rawSamples) {
-    dbg.rawSamples = {};
-    if (pcbData._rawSamples.Pad) {
-      var rs = pcbData._rawSamples.Pad;
-      dbg.rawSamples.Pad = { count: rs.count, allProps: rs.sample };
-    }
-    if (pcbData._rawSamples.Pour) {
-      var rp = pcbData._rawSamples.Pour;
-      dbg.rawSamples.Pour = { count: rp.count, allProps: rp.sample };
-    }
-    if (pcbData._rawSamples.Fill) {
-      var rf = pcbData._rawSamples.Fill;
-      dbg.rawSamples.Fill = { count: rf.count, allProps: rf.sample };
-    }
-    if (pcbData._rawSamples.Arc) {
-      dbg.rawSamples.Arc = { count: pcbData._rawSamples.Arc.count, allProps: pcbData._rawSamples.Arc.sample };
-    }
-    if (pcbData._rawSamples.Line) {
-      dbg.rawSamples.Line = { count: pcbData._rawSamples.Line.count, allProps: pcbData._rawSamples.Line.sample };
-    }
-  }
-
-  // Debug APIs — which extra APIs found zone items
-  if (pcbData._debugApis) {
-    dbg.apiDebug = {};
-    for (var ak in pcbData._debugApis) {
-      if (ak === 'boardOutlineDebug') continue;
-      var ad = pcbData._debugApis[ak];
-      if (ad && (ad.count > 0 || ad.error)) dbg.apiDebug[ak] = ad;
-    }
-  }
-
-  // All zones with subType info
-  dbg.allZonesRaw = (pcbData.zones || []).map(function(z) {
-    var entry = { id: z.id, net: z.net, layer: z.layer, subType: z.subType, hasPts: !!(z.outlinePoints && z.outlinePoints.length >= 3), area: z.areaMm2 ? +z.areaMm2.toFixed(1) : null };
-    if (z._rawPoly) entry.rawPoly = z._rawPoly;
-    if (z._rawX !== undefined) entry.rawX = z._rawX;
-    if (z._rawY !== undefined) entry.rawY = z._rawY;
-    if (z._rawBounds) entry.rawBounds = z._rawBounds;
-    return entry;
-  });
-
-  var json = JSON.stringify(dbg, null, 2);
-  document.getElementById('debug-viz-json').value = json;
-  document.getElementById('debug-viz-overlay').style.display = 'block';
-  document.getElementById('debug-viz-panel').style.display = 'flex';
-});
-
-document.getElementById('btn-dbgviz-copy').addEventListener('click', function() {
-  var ta = document.getElementById('debug-viz-json');
-  ta.select();
-  document.execCommand('copy');
-});
-
-document.getElementById('btn-dbgviz-download').addEventListener('click', function() {
-  var json = document.getElementById('debug-viz-json').value;
-  var blob = new Blob([json], { type: 'application/json' });
-  var url = URL.createObjectURL(blob);
-  var a = document.createElement('a');
-  a.href = url;
-  a.download = 'viz-debug-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.json';
-  a.click();
-  URL.revokeObjectURL(url);
-});
-
-document.getElementById('btn-dbgviz-close').addEventListener('click', function() {
-  document.getElementById('debug-viz-overlay').style.display = 'none';
-  document.getElementById('debug-viz-panel').style.display = 'none';
-});
-document.getElementById('debug-viz-overlay').addEventListener('click', function() {
-  document.getElementById('debug-viz-overlay').style.display = 'none';
-  document.getElementById('debug-viz-panel').style.display = 'none';
-});
 </script>
 </body>
 </html>
