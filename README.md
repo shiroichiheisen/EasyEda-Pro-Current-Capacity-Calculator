@@ -2,6 +2,12 @@
 
 Extension for **EasyEDA Pro** that calculates the maximum current capacity of each PCB trace based on the **IPC-2221B** standard, including 2D canvas visualization.
 
+![Main Screen](img/start_screen.png)
+
+![Visualization — Total Current](img/line_total.png)
+
+![Visualization — Per-Segment Heatmap](img/segments_total.png)
+
 ## Features
 
 - **IPC-2221B Calculation** — `I = k × ΔT^0.44 × A^0.725` (k=0.048 outer, k=0.024 inner)
