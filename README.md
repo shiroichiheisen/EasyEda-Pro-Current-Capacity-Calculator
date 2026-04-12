@@ -1,123 +1,124 @@
 # PCB Trace Current Capacity Calculator
 
-Extensão para **EasyEDA Pro** que calcula a capacidade máxima de corrente de cada trilha do PCB com base no padrão **IPC-2221B**, incluindo visualização em canvas 2D.
+Extension for **EasyEDA Pro** that calculates the maximum current capacity of each PCB trace based on the **IPC-2221B** standard, including 2D canvas visualization.
 
-## Funcionalidades
+## Features
 
-- **Cálculo IPC-2221B** — `I = k × ΔT^0.44 × A^0.725` (k=0.048 externo, k=0.024 interno)
-- **Filtragem por camadas copper** — somente camadas de cobre são processadas (Top, Bottom, Inner), excluindo silkscreen, soldermask, paste, etc.
-- **Presets JLCPCB** — espessuras de cobre pré-configuradas (2L 1oz, 2L 2oz, 4L 1oz, 4L 2oz, 6L 1oz)
-- **Tabela ordenável** — Net, Layer, Width, Length, Segmentos, Área (mil²), I max, Resistência, Queda de tensão, Posição
-- **Cards de resumo** — Grupos, Nets, Min/Max/Avg I max, Comprimento total
-- **Sidebar de bottlenecks** — nets ordenados pela menor corrente máxima
-- **Filtro por layer e busca** — filtre trilhas por camada ou pesquise por nome de net
-- **Filtro Min/Max I** — limite a visualização por faixa de corrente
-- **Exportação CSV** — exporte a tabela completa
-- **Visualização em Canvas** — mapa de calor 2D com escala dinâmica de corrente
-  - Pan/zoom com mouse
-  - Hover com detalhes da trilha (corrente, net, layer, largura)
-  - Seleção de net (clique no bottleneck ou na trilha)
-  - Escala de cores dinâmica baseada na corrente máxima real do PCB
-  - Filtros: ΔT, Min I, Max I, Layer, Vias
-  - Legenda adaptativa
+- **IPC-2221B Calculation** — `I = k × ΔT^0.44 × A^0.725` (k=0.048 outer, k=0.024 inner)
+- **Copper layer filtering** — only copper layers are processed (Top, Bottom, Inner), excluding silkscreen, soldermask, paste, etc.
+- **JLCPCB Presets** — pre-configured copper thicknesses (2L 1oz, 2L 2oz, 4L 1oz, 4L 2oz, 6L 1oz)
+- **Sortable table** — Net, Layer, Width, Length, Segments, Area (mil²), I max, Resistance, Voltage drop, Position
+- **Summary cards** — Groups, Nets, Min/Max/Avg I max, Total length
+- **Bottleneck sidebar** — nets sorted by lowest maximum current
+- **Layer filter and search** — filter traces by layer or search by net name
+- **Min/Max I filter** — limit visualization by current range
+- **CSV export** — export the complete table
+- **Canvas Visualization** — 2D heatmap with dynamic current scale
+  - Mouse pan/zoom
+  - Hover with trace details (current, net, layer, width)
+  - Net selection (click on bottleneck or trace)
+  - Dynamic color scale based on actual PCB maximum current
+  - Filters: ΔT, Min I, Max I, Layer, Vias
+  - Adaptive legend
 
-## Fórmulas
+## Formulas
 
-| Cálculo | Fórmula |
+| Calculation | Formula |
 |---|---|
-| Corrente máxima | `I = k × ΔT^0.44 × (W × T)^0.725` |
-| Resistência | `R = ρ × L / (W × T)` com ρ ajustado pela temperatura |
-| Queda de tensão | `V = I × R` |
-| Elevação de temperatura | Invertida da fórmula IPC-2221B |
+| Maximum current | `I = k × ΔT^0.44 × (W × T)^0.725` |
+| Resistance | `R = ρ × L / (W × T)` with temperature-adjusted ρ |
+| Voltage drop | `V = I × R` |
+| Temperature rise | Inverted IPC-2221B formula |
 
-Onde:
-- `k` = 0.048 (camada externa), 0.024 (camada interna)
-- `W` = largura da trilha (mil)
-- `T` = espessura do cobre (mil)
-- `ΔT` = elevação de temperatura acima da ambiente (°C)
-- `ρ` = resistividade do cobre: 1.724×10⁻⁵ Ω·mm a 20°C, α = 3.93×10⁻³/°C
+Where:
+- `k` = 0.048 (outer layer), 0.024 (inner layer)
+- `W` = trace width (mil)
+- `T` = copper thickness (mil)
+- `ΔT` = temperature rise above ambient (°C)
+- `ρ` = copper resistivity: 1.724×10⁻⁵ Ω·mm at 20°C, α = 3.93×10⁻³/°C
 
-## Estrutura
+## Structure
 
 ```
 easyeda-current-capacity/
-├── extension.json          # Manifesto da extensão
+├── extension.json          # Extension manifest
 ├── dist/
-│   └── index.js            # Entry point — extração de dados PCB
+│   └── index.js            # Entry point — PCB data extraction
 ├── iframe/
-│   ├── index.html          # UI principal — tabela, cards, settings
-│   ├── current-calc.js     # Motor de cálculo IPC-2221B
-│   └── current-viz.html    # Visualização canvas 2D
+│   ├── index.html          # Main UI — table, cards, settings
+│   ├── current-calc.js     # IPC-2221B calculation engine
+│   └── current-viz.html    # 2D canvas visualization
 └── README.md
 ```
 
-## Instalação
+## Installation
 
-1. Gere o arquivo `.eext` (ZIP com caminhos usando `/`)
-2. No EasyEDA Pro: **Extensions → Extension Manager → Load from local**
-3. Selecione o arquivo `.eext`
+1. Generate the `.eext` file (ZIP with `/` paths)
+2. In EasyEDA Pro: **Extensions → Extension Manager → Load from local**
+3. Select the `.eext` file
 
-## Uso
+## Usage
 
-1. Abra um PCB no EasyEDA Pro
+1. Open a PCB in EasyEDA Pro
 2. Menu: **Current Capacity → Calculate Current Capacity...**
-3. Configure o ΔT e espessura do cobre no painel de Settings
-4. Clique em **Visualize** para abrir o mapa de calor
+3. Configure ΔT and copper thickness in the Settings panel
+4. Click **Visualize** to open the heatmap
 
 ## Changelog
 ### v1.9.0
-- **Board outline clipping para Fills** — `pcb_PrimitiveFill` agora é clipado ao board outline (Sutherland-Hodgman), igual aos Pours. Fills que se estendiam além da placa (coordenadas raw da API) agora aparecem no tamanho correto.
-- **Correção de largura de arcos** — a API `pcb_PrimitiveArc.lineWidth` retorna um valor default (10 mil) para todos os arcos. Implementada herança de largura: arcos herdam a width do line segment conectado (mesmo net/layer, endpoint com snap de 5µm). Segunda passada propaga para arcos encadeados (arc→arc→line).
-- **Checkbox "Zones"** — adicionado na página principal (tabela) e na visualização canvas, ambos desmarcados por padrão. Ao desmarcar, zonas são excluídas da tabela, cards, sidebar, legenda, statistics e bottleneck list. A escala de cores e `globalMaxI` são recalculados dinamicamente.
-- **Debug expandido** — `arcSamples` (10 arcos com width/iMax/segs), `lineSamples` (5 lines), `widthDistribution` (widths únicos com contagem), `arcWidthFix` (stats da correção), `rawSamples` com ALL properties da API para Arc/Line/Pad/Pour/Fill, `_rawPoly`/`_rawBounds` para Fills.
+- **Board outline clipping for Fills** — `pcb_PrimitiveFill` is now clipped to the board outline (Sutherland-Hodgman), same as Pours. Fills that extended beyond the board (raw API coordinates) now appear at the correct size.
+- **Arc width fix** — the `pcb_PrimitiveArc.lineWidth` API returns a default value (10 mil) for all arcs. Implemented width inheritance: arcs inherit the width from the connected line segment (same net/layer, endpoint with 5µm snap). A second pass propagates to chained arcs (arc→arc→line).
+- **"Zones" checkbox** — added to the main page (table) and canvas visualization, both unchecked by default. When unchecked, zones are excluded from the table, cards, sidebar, legend, statistics, and bottleneck list. The color scale and `globalMaxI` are dynamically recalculated.
+- **Expanded debug** — `arcSamples` (10 arcs with width/iMax/segs), `lineSamples` (5 lines), `widthDistribution` (unique widths with count), `arcWidthFix` (fix stats), `rawSamples` with ALL API properties for Arc/Line/Pad/Pour/Fill, `_rawPoly`/`_rawBounds` for Fills.
+
 ### v1.5.0
-- **Heatmap 2D em grid** — substituída a análise por faixas (strips H/V + dropdown) por um grid 30×30 que calcula automaticamente `min(largura↔, altura↕)` em cada célula. Cada célula da zona recebe a corrente IPC-2221B baseada na menor dimensão (gargalo), sem necessidade de trocar direção.
-- **Visualização automática** — removido o dropdown de direção de fluxo (↕/↔/Min). A visualização agora mostra o pior caso em cada ponto automaticamente.
-- **Hover com dimensões** — ao passar o mouse sobre a zona, mostra a corrente da célula + largura horizontal (↔) + altura vertical (↕) + corrente mínima da zona.
+- **2D grid heatmap** — replaced the strip analysis (H/V strips + dropdown) with a 30×30 grid that automatically calculates `min(width↔, height↕)` per cell. Each zone cell receives the IPC-2221B current based on the smallest dimension (bottleneck), with no need to switch direction.
+- **Automatic visualization** — removed the flow direction dropdown (↕/↔/Min). The visualization now shows the worst case at each point automatically.
+- **Hover with dimensions** — hovering over a zone shows the cell current + horizontal width (↔) + vertical height (↕) + zone minimum current.
 
 ### v1.4.0
-- **Análise de corrente por faixa (strip analysis)** — zonas/pours são fatiadas em 40 faixas horizontais e verticais. Cada faixa mede a largura real do cobre naquela posição usando scan-line no polígono, calculando a corrente IPC-2221B individualmente. Identifica gargalos em formas como "C", "L", "T" etc.
-- **Seletor de direção de fluxo** — dropdown na visualização: ↕ Vertical flow (faixas horizontais), ↔ Horizontal flow (faixas verticais), ou Min (bottleneck) que mostra o pior caso de ambas as direções.
-- **Heatmap por faixa** — cada faixa da zona é colorida independentemente pela sua corrente, revelando visualmente onde o pour é estreito (vermelho) vs largo (verde).
-- **Hover com corrente local** — ao passar o mouse sobre uma zona, mostra a corrente da faixa específica + largura efetiva + corrente mínima (bottleneck) da zona inteira.
-- **Point-in-polygon** — detecção de hover agora usa ray-casting em vez de bounding box, preciso para polígonos não-retangulares.
-- **Checkbox de seleção na tabela** — cada linha da tabela tem checkbox para selecionar trilhas individualmente, com Select All no header.
-- **Card de seleção (⚡)** — ao selecionar trilhas, exibe corrente total somada (para trilhas em paralelo em múltiplas camadas), resistência equivalente em paralelo, e lista detalhada.
-- **PCBs sem traces** — extensão agora abre normalmente em PCBs que só possuem copper pours/fills (sem trilhas).
+- **Strip-based current analysis** — zones/pours are sliced into 40 horizontal and vertical strips. Each strip measures the actual copper width at that position using scan-line on the polygon, calculating IPC-2221B current individually. Identifies bottlenecks in shapes like "C", "L", "T", etc.
+- **Flow direction selector** — dropdown in visualization: ↕ Vertical flow (horizontal strips), ↔ Horizontal flow (vertical strips), or Min (bottleneck) showing the worst case from both directions.
+- **Per-strip heatmap** — each zone strip is independently colored by its current, visually revealing where the pour is narrow (red) vs wide (green).
+- **Local current on hover** — hovering over a zone shows the specific strip current + effective width + minimum current (bottleneck) of the entire zone.
+- **Point-in-polygon** — hover detection now uses ray-casting instead of bounding box, accurate for non-rectangular polygons.
+- **Table selection checkboxes** — each table row has a checkbox for individual trace selection, with Select All in the header.
+- **Selection card (⚡)** — when traces are selected, displays summed total current (for parallel traces on multiple layers), equivalent parallel resistance, and detailed list.
+- **PCBs without traces** — extension now opens normally on PCBs that only have copper pours/fills (no traces).
 
 ### v1.3.0
-- **Parser de `complexPolygon`** — pours e fills do EasyEDA Pro usam `complexPolygon.polygon` (array de coordenadas + comandos "L"/"R") em vez de `bounds`. Novo parser extrai os pontos do polígono, calcula bounding box e área via fórmula de Shoelace. Suporta polígonos genéricos e retângulos ("R").
-- **Copper Fill support** — extração dedicada de `pcb_PrimitiveFill` com parsing de `complexPolygon`, agora processados como zonas com cálculo de corrente.
-- **Detecção de copper layers corrigida** — substituída a detecção por keywords (que incluía Hole, 3D Shell, Ratline, Stiffener como copper) por whitelist fixa: IDs 1 (Top), 2 (Bottom), 15-46 (Inner1-32). Validada contra layers reais da API.
-- **Botão Debug (🐛)** — exibe todos os dados brutos extraídos em JSON (amostras, APIs testadas, zonas), com botão Copy.
-- **Probing de APIs extras** — testa automaticamente `pcb_PrimitiveSolidRegion`, `pcb_PrimitiveRegion`, `pcb_PrimitivePolygon`, `pcb_PrimitiveCopper`, `pcb_PrimitiveCopperArea`, `pcb_PrimitiveCircle`, `pcb_PrimitiveRect`, `pcb_PrimitiveTrack`, `pcb_PrimitiveShape`. APIs com `complexPolygon` ou bounds+copper são adicionadas como zonas.
-- **Raw samples** — cada primitiva (Line, Arc, Via, Pad, Pour, Fill + extras) guarda amostra completa das propriedades da API, visíveis no Debug.
-- **Zonas no canvas e tabela** — copper pours/fills agora aparecem com polígono correto (não mais retângulo vazio), incluindo cálculo de corrente, hover, e visualização.
+- **`complexPolygon` parser** — EasyEDA Pro pours and fills use `complexPolygon.polygon` (array of coordinates + "L"/"R" commands) instead of `bounds`. New parser extracts polygon points, calculates bounding box and area via Shoelace formula. Supports generic polygons and rectangles ("R").
+- **Copper Fill support** — dedicated extraction of `pcb_PrimitiveFill` with `complexPolygon` parsing, now processed as zones with current calculation.
+- **Fixed copper layer detection** — replaced keyword-based detection (which included Hole, 3D Shell, Ratline, Stiffener as copper) with a fixed whitelist: IDs 1 (Top), 2 (Bottom), 15-46 (Inner1-32). Validated against actual API layers.
+- **Debug button (🐛)** — displays all raw extracted data in JSON (samples, tested APIs, zones), with Copy button.
+- **Extra API probing** — automatically tests `pcb_PrimitiveSolidRegion`, `pcb_PrimitiveRegion`, `pcb_PrimitivePolygon`, `pcb_PrimitiveCopper`, `pcb_PrimitiveCopperArea`, `pcb_PrimitiveCircle`, `pcb_PrimitiveRect`, `pcb_PrimitiveTrack`, `pcb_PrimitiveShape`. APIs with `complexPolygon` or bounds+copper are added as zones.
+- **Raw samples** — each primitive (Line, Arc, Via, Pad, Pour, Fill + extras) stores a complete sample of API properties, visible in Debug.
+- **Zones on canvas and table** — copper pours/fills now appear with correct polygon (no longer an empty rectangle), including current calculation, hover, and visualization.
 
 ### v1.2.0
-- **Detecção de camadas copper aprimorada** — adicionado `'pin'` e `'float'` à lista de keywords não-cobre, corrigindo a inclusão indevida da camada "Pin Floating Layer"
-- **Canvas corrigido (180°)** — eixo Y invertido em `worldToScreen`/`screenToWorld` para orientação top-down correta (igual ao EasyEDA)
-- **Drag vertical corrigido** — sentido do arraste vertical ajustado para corresponder à inversão do eixo Y
-- **Max I no textbox** — o campo Max I agora exibe a corrente máxima real como placeholder quando vazio
-- **Stackup simplificado** — removido dropdown de presets JLCPCB; espessura de cobre agora é inserida diretamente em **oz** (outer e inner), com conversão automática para mm (1 oz = 0.035 mm)
-- **Compatibilidade de stackup** — carrega configurações salvas no formato antigo (mm) e converte para oz
+- **Improved copper layer detection** — added `'pin'` and `'float'` to the non-copper keywords list, fixing the incorrect inclusion of the "Pin Floating Layer"
+- **Fixed canvas (180°)** — Y-axis inverted in `worldToScreen`/`screenToWorld` for correct top-down orientation (matching EasyEDA)
+- **Fixed vertical drag** — vertical drag direction adjusted to match Y-axis inversion
+- **Max I in textbox** — the Max I field now displays the actual maximum current as placeholder when empty
+- **Simplified stackup** — removed JLCPCB presets dropdown; copper thickness is now entered directly in **oz** (outer and inner), with automatic conversion to mm (1 oz = 0.035 mm)
+- **Stackup compatibility** — loads saved settings in the old format (mm) and converts to oz
 
 ### v1.1.0
-- Filtragem de camadas copper aprimorada — exclui silkscreen, soldermask, paste e outras camadas não-cobre por keywords
-- Visualização canvas: escala de corrente dinâmica baseada na corrente máxima real (em vez de 10A/15A fixos)
-- Visualização canvas: legenda com valores adaptativos
-- Visualização canvas: filtro copper-only em todas as funções (draw, fitView, recalculate, findTraceAt, populateFilters)
-- Adicionado filtro **Max I** na toolbar da visualização
-- Gradiente da barra de legenda usa quartis da corrente máxima real
+- Improved copper layer filtering — excludes silkscreen, soldermask, paste, and other non-copper layers by keywords
+- Canvas visualization: dynamic current scale based on actual maximum current (instead of fixed 10A/15A)
+- Canvas visualization: legend with adaptive values
+- Canvas visualization: copper-only filter in all functions (draw, fitView, recalculate, findTraceAt, populateFilters)
+- Added **Max I** filter in visualization toolbar
+- Legend bar gradient uses actual maximum current quartiles
 
 ### v1.0.0
-- Release inicial
-- Cálculo IPC-2221B completo (corrente max, resistência, queda de tensão, elevação de temperatura)
-- Presets JLCPCB (2L/4L/6L, 1oz/2oz)
-- Tabela ordenável com sidebar de bottlenecks
-- Visualização canvas 2D com pan/zoom e hover
-- Exportação CSV
+- Initial release
+- Complete IPC-2221B calculation (max current, resistance, voltage drop, temperature rise)
+- JLCPCB presets (2L/4L/6L, 1oz/2oz)
+- Sortable table with bottleneck sidebar
+- 2D canvas visualization with pan/zoom and hover
+- CSV export
 
-## Licença
+## License
 
 MIT
