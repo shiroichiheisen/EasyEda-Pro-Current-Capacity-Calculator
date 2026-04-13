@@ -57,9 +57,32 @@ easyeda-current-capacity/
 └── README.md
 ```
 
+## Build
+
+Generate the `.eext` package (PowerShell):
+
+```powershell
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+Add-Type -AssemblyName System.IO.Compression
+
+$src = "path\to\easyeda-current-capacity"
+$out = "current-capacity-calculator.eext"
+
+$zip = [System.IO.Compression.ZipFile]::Open($out, [System.IO.Compression.ZipArchiveMode]::Create)
+Get-ChildItem -Path $src -Recurse -File | ForEach-Object {
+    $entry = $_.FullName.Substring($src.Length + 1).Replace('\', '/')
+    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+        $zip, $_.FullName, $entry,
+        [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+}
+$zip.Dispose()
+```
+
+> Replace `$src` with the actual path to the project folder.
+
 ## Installation
 
-1. Generate the `.eext` file (ZIP with `/` paths)
+1. Build the `.eext` file using the script above
 2. In EasyEDA Pro: **Extensions → Extension Manager → Load from local**
 3. Select the `.eext` file
 

@@ -335,7 +335,9 @@ function analyzeCurrentCapacity() {
           if (!_pointInPolygon(cx, cy, pts)) continue;
           var wH = _localWidthAtY(pts, cy, cx);
           var hV = _localHeightAtX(pts, cx, cy);
-          var eff = Math.min(wH, hV);
+          var wD45 = _localWidthAtAngle(pts, cx, cy, 45);
+          var wD135 = _localWidthAtAngle(pts, cx, cy, 135);
+          var eff = Math.min(wH, hV, wD45, wD135);
           if (eff <= 0) continue;
           var cellI = CurrentCalc.calcMaxCurrent(eff, cuThick, deltaT, isInternal);
           if (cellI < minCellI) { minCellI = cellI; minEffW = eff; }
@@ -412,6 +414,34 @@ function analyzeCurrentCapacity() {
       if (py >= ys[i] && py <= ys[i + 1]) return ys[i + 1] - ys[i];
     }
     return 0;
+  }
+  function _localWidthAtAngle(pts, cx, cy, angleDeg) {
+    var angle = angleDeg * Math.PI / 180;
+    var dx = Math.cos(angle);
+    var dy = Math.sin(angle);
+    var tValues = [];
+    for (var i = 0; i < pts.length; i++) {
+      var j = (i + 1) % pts.length;
+      var ex = pts[j].x - pts[i].x;
+      var ey = pts[j].y - pts[i].y;
+      var denom = dx * ey - dy * ex;
+      if (Math.abs(denom) < 1e-12) continue;
+      var diffX = pts[i].x - cx;
+      var diffY = pts[i].y - cy;
+      var t = (diffX * ey - ex * diffY) / denom;
+      var s = (diffX * dy - dx * diffY) / denom;
+      if (s < 0 || s > 1) continue;
+      tValues.push(t);
+    }
+    if (tValues.length < 2) return 0;
+    tValues.sort(function(a, b) { return a - b; });
+    var tNeg = null, tPos = null;
+    for (var k = 0; k < tValues.length; k++) {
+      if (tValues[k] <= 0) tNeg = tValues[k];
+      if (tValues[k] >= 0 && tPos === null) tPos = tValues[k];
+    }
+    if (tNeg === null || tPos === null) return 0;
+    return tPos - tNeg;
   }
   function _pointInPolygon(px, py, pts) {
     var inside = false;
