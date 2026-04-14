@@ -94,6 +94,12 @@ $zip.Dispose()
 4. Click **Visualize** to open the heatmap
 
 ## Changelog
+### v1.10.0
+- **Board outline arc support** — EasyEDA Pro uses a 3-parameter ARC format (`ARC, arcAngle, endX, endY`) for rounded corners in board outlines. New `_approxArcEda()` function correctly approximates these arcs, so boards with rounded corners now display the correct outline shape.
+- **R-rectangle rotation fix** — the `"R"` polygon format (`R, x, y, w, h, rotation, cornerRadius`) now uses origin-based rotation: the rectangle extends from `(x,y)` with width right and height downward, then rotates around the origin. Fixes pour/fill positioning and angle for rotated zones.
+- **Board clip always active** — zone clipping to the board outline is now always applied, regardless of the "Show Outline" checkbox state. Previously, zones could visually extend beyond the board when the outline was hidden.
+- **Removed debug button** — the `🐛 Debug` button and overlay (with JSON dump and copy) have been removed from the canvas visualization.
+
 ### v1.9.1
 - **Color scale update** — replaced red/dark-red tones with purple/magenta gradient for low-current areas. Red implied a problem, but low current capacity is not inherently bad.
 - **Loading overlay** — spinner with "Loading PCB data…" while the visualization canvas processes data, preventing a blank white screen.
