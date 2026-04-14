@@ -333,6 +333,10 @@ function analyzeCurrentCapacity() {
           var cx = bMinX + (gx + 0.5) * xStep;
           var cy = bMinY + (gy + 0.5) * yStep;
           if (!_pointInPolygon(cx, cy, pts)) continue;
+          // Check board outline containment (handles concave board shapes)
+          if (pcbData.boardOutline && pcbData.boardOutline.length >= 3) {
+            if (!_pointInPolygon(cx, cy, pcbData.boardOutline)) continue;
+          }
           var wH = _localWidthAtY(pts, cy, cx);
           var hV = _localHeightAtX(pts, cx, cy);
           var wD45 = _localWidthAtAngle(pts, cx, cy, 45);
@@ -403,6 +407,11 @@ function analyzeCurrentCapacity() {
   }
   function _localWidthAtY(pts, y, px) {
     var xs = _getXIntersections(pts, y);
+    // Clip zone spans against board outline
+    if (pcbData.boardOutline && pcbData.boardOutline.length >= 3) {
+      var bxs = _getXIntersections(pcbData.boardOutline, y);
+      xs = _clipSpans(xs, bxs);
+    }
     for (var i = 0; i + 1 < xs.length; i += 2) {
       if (px >= xs[i] && px <= xs[i + 1]) return xs[i + 1] - xs[i];
     }
@@ -410,35 +419,52 @@ function analyzeCurrentCapacity() {
   }
   function _localHeightAtX(pts, x, py) {
     var ys = _getYIntersections(pts, x);
+    // Clip zone spans against board outline
+    if (pcbData.boardOutline && pcbData.boardOutline.length >= 3) {
+      var bys = _getYIntersections(pcbData.boardOutline, x);
+      ys = _clipSpans(ys, bys);
+    }
     for (var i = 0; i + 1 < ys.length; i += 2) {
       if (py >= ys[i] && py <= ys[i + 1]) return ys[i + 1] - ys[i];
     }
     return 0;
   }
-  function _localWidthAtAngle(pts, cx, cy, angleDeg) {
-    var angle = angleDeg * Math.PI / 180;
-    var dx = Math.cos(angle);
-    var dy = Math.sin(angle);
-    var tValues = [];
-    for (var i = 0; i < pts.length; i++) {
-      var j = (i + 1) % pts.length;
-      var ex = pts[j].x - pts[i].x;
-      var ey = pts[j].y - pts[i].y;
-      var denom = dx * ey - dy * ex;
-      if (Math.abs(denom) < 1e-12) continue;
-      var diffX = pts[i].x - cx;
-      var diffY = pts[i].y - cy;
-      var t = (diffX * ey - ex * diffY) / denom;
-      var s = (diffX * dy - dx * diffY) / denom;
-      if (s < 0 || s > 1) continue;
-      tValues.push(t);
+  // Intersect two sets of spans (flat arrays: [enter, exit, enter, exit, ...])
+  function _clipSpans(spans, clipSpans) {
+    if (clipSpans.length < 2) return [];
+    var result = [];
+    for (var i = 0; i + 1 < spans.length; i += 2) {
+      for (var j = 0; j + 1 < clipSpans.length; j += 2) {
+        var lo = Math.max(spans[i], clipSpans[j]);
+        var hi = Math.min(spans[i + 1], clipSpans[j + 1]);
+        if (lo < hi) { result.push(lo, hi); }
+      }
     }
-    if (tValues.length < 2) return 0;
-    tValues.sort(function(a, b) { return a - b; });
+    return result;
+  }
+  function _localWidthAtAngle(pts, cx, cy, angleDeg) {
     var tNeg = null, tPos = null;
-    for (var k = 0; k < tValues.length; k++) {
-      if (tValues[k] <= 0) tNeg = tValues[k];
-      if (tValues[k] >= 0 && tPos === null) tPos = tValues[k];
+    function _rayIntersectPoly(polyPts) {
+      var angle = angleDeg * Math.PI / 180;
+      var dx = Math.cos(angle), dy = Math.sin(angle);
+      for (var i = 0; i < polyPts.length; i++) {
+        var j = (i + 1) % polyPts.length;
+        var ex = polyPts[j].x - polyPts[i].x;
+        var ey = polyPts[j].y - polyPts[i].y;
+        var denom = dx * ey - dy * ex;
+        if (Math.abs(denom) < 1e-12) continue;
+        var diffX = polyPts[i].x - cx, diffY = polyPts[i].y - cy;
+        var t = (diffX * ey - ex * diffY) / denom;
+        var s = (diffX * dy - dx * diffY) / denom;
+        if (s < 0 || s > 1) continue;
+        if (t <= 0) { if (tNeg === null || t > tNeg) tNeg = t; }
+        if (t >= 0) { if (tPos === null || t < tPos) tPos = t; }
+      }
+    }
+    _rayIntersectPoly(pts);
+    // Also clip by board outline
+    if (pcbData.boardOutline && pcbData.boardOutline.length >= 3) {
+      _rayIntersectPoly(pcbData.boardOutline);
     }
     if (tNeg === null || tPos === null) return 0;
     return tPos - tNeg;

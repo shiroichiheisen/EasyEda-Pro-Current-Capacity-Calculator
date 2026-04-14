@@ -238,7 +238,8 @@ function recalculate() {
   (pcbData.zones || []).forEach(function(z) {
     if (!isCopperLayer(z.layer)) return;
     if (!z.bounds) return;
-    var key = (z.net || '') + '|' + z.layer;
+    // Only merge zones that have a real net name; empty/no-net zones are independent
+    var key = (z.net && z.net !== '') ? (z.net + '|' + z.layer) : ('__solo__' + z.id);
     if (!zoneGroupMap[key]) zoneGroupMap[key] = [];
     zoneGroupMap[key].push(z);
   });
@@ -340,6 +341,10 @@ function recalculate() {
             if (pointInPolygon(cx, cy, allPtsList[api])) inAny = true;
           }
           if (!inAny) continue;
+          // Check if point is inside board outline (handles concave boards)
+          if (pcbData.boardOutline && pcbData.boardOutline.length >= 3) {
+            if (!pointInPolygon(cx, cy, pcbData.boardOutline)) continue;
+          }
 
           // Check if subdivision needed (obstacle near cell)
           var needsSub = false;
@@ -387,11 +392,16 @@ function recalculate() {
                   if (pointInPolygon(scx, scy, allPtsList[api2])) subInAny = true;
                 }
                 if (!subInAny) continue;
+                if (pcbData.boardOutline && pcbData.boardOutline.length >= 3) {
+                  if (!pointInPolygon(scx, scy, pcbData.boardOutline)) continue;
+                }
               }
 
-              // Use merged intersections from all same-net polygons
+              // Use merged intersections from all same-net polygons, clipped to board outline
               var mergedXI = getMergedXIntersections(allPtsList, scy);
+              mergedXI = clipSpansWithBoard(mergedXI, scy, true);
               var mergedYI = getMergedYIntersections(allPtsList, scx);
+              mergedYI = clipSpansWithBoard(mergedYI, scx, false);
 
               var wH = mergedLocalWidthAtY(mergedXI, scx);
               var hV = mergedLocalHeightAtX(mergedYI, scy);
@@ -691,6 +701,24 @@ function recalculate() {
       }
     }
     return merged;
+  }
+
+  // Clip zone spans against board outline spans at the same scan line
+  function clipSpansWithBoard(spans, scanVal, isHorizontal) {
+    if (!pcbData.boardOutline || pcbData.boardOutline.length < 3) return spans;
+    var boardInts = isHorizontal
+      ? getXIntersections(pcbData.boardOutline, scanVal)
+      : getYIntersections(pcbData.boardOutline, scanVal);
+    if (boardInts.length < 2) return [];
+    var result = [];
+    for (var i = 0; i + 1 < spans.length; i += 2) {
+      for (var j = 0; j + 1 < boardInts.length; j += 2) {
+        var lo = Math.max(spans[i], boardInts[j]);
+        var hi = Math.min(spans[i + 1], boardInts[j + 1]);
+        if (lo < hi) { result.push(lo, hi); }
+      }
+    }
+    return result;
   }
 
   function mergedLocalWidthAtY(mergedXI, px) {
@@ -1240,9 +1268,28 @@ function draw() {
     });
   }
 
+  // Helper: apply board outline as canvas clip path
+  function applyBoardClip() {
+    if (boardPts && boardPts.length >= 3) {
+      ctx.save();
+      ctx.beginPath();
+      var bc0 = worldToScreen(boardPts[0].x, boardPts[0].y);
+      ctx.moveTo(bc0.x, bc0.y);
+      for (var bci = 1; bci < boardPts.length; bci++) {
+        var bcp = worldToScreen(boardPts[bci].x, boardPts[bci].y);
+        ctx.lineTo(bcp.x, bcp.y);
+      }
+      ctx.closePath();
+      ctx.clip();
+      return true;
+    }
+    return false;
+  }
+
   // Draw order when net selected: non-selected zones → non-selected traces → selected zones → selected traces
   // When no net selected: zones → traces (single pass)
   if (showZones && pcbData.zones) {
+    var clipped = applyBoardClip();
     if (selectedNet) {
       // Pass 1: non-selected zones
       pcbData.zones.forEach(function(z) {
@@ -1251,6 +1298,7 @@ function draw() {
     } else {
       pcbData.zones.forEach(drawZone);
     }
+    if (clipped) ctx.restore();
   }
 
   if (selectedNet) {
@@ -1258,9 +1306,11 @@ function draw() {
     drawTraces(false);
     // Selected zones on top of non-selected items
     if (showZones && pcbData.zones) {
+      var clipped2 = applyBoardClip();
       pcbData.zones.forEach(function(z) {
         if (selectedNet && z.net === selectedNet) drawZone(z);
       });
+      if (clipped2) ctx.restore();
     }
     // Selected traces on top of everything
     drawTraces(true);

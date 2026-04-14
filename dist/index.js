@@ -103,7 +103,9 @@ var edaEsbuildExportName = (() => {
       apiLayerNames: {},
       copperLayerIds: {},
       _rawSamples: {},
-      _debugApis: {}
+      _debugApis: {},
+      _debugAllPours: [],
+      _debugAllFills: []
     };
 
     try {
@@ -366,35 +368,121 @@ var edaEsbuildExportName = (() => {
     // ── Parse complexPolygon format used by Pour and Fill ──
     // Format: array of numbers + optional string commands
     // Pour: [x0, y0, "L", x1, y1, x2, y2, ...] → pairs of coords, skip string commands
-    // Fill with "R": ["R", x1, y1, x2, y2, rx, ry] → rectangle
+    // Fill with "R": ["R", x, y, width, height, rx, ry] → rectangle
     function parseComplexPolygon(cp) {
       if (!cp || !cp.polygon || !Array.isArray(cp.polygon)) return null;
       var poly = cp.polygon;
       var points = [];
       var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 
-      // Check for "R" rectangle: ["R", x1, y1, x2, y2, ...]
+      // Check for "R" rectangle: ["R", x, y, width, height, rotation, cornerRadius]
+      // (x,y) is origin; rect extends (w right, h down); rotation around origin
       if (poly.length >= 5 && poly[0] === 'R') {
-        var rx1 = poly[1] * MIL_TO_MM, ry1 = poly[2] * MIL_TO_MM;
-        var rx2 = poly[3] * MIL_TO_MM, ry2 = poly[4] * MIL_TO_MM;
-        points = [
-          { x: rx1, y: ry1 }, { x: rx2, y: ry1 },
-          { x: rx2, y: ry2 }, { x: rx1, y: ry2 }
-        ];
-        minX = Math.min(rx1, rx2); minY = Math.min(ry1, ry2);
-        maxX = Math.max(rx1, rx2); maxY = Math.max(ry1, ry2);
-      } else {
-        // General polygon: pairs of numbers, skip string commands
-        var nums = [];
-        for (var pi = 0; pi < poly.length; pi++) {
-          if (typeof poly[pi] === 'number') nums.push(poly[pi]);
+        var rOx = poly[1] * MIL_TO_MM, rOy = poly[2] * MIL_TO_MM;
+        var rW = poly[3] * MIL_TO_MM, rH = poly[4] * MIL_TO_MM;
+        var rAngle = (poly.length >= 6 ? poly[5] : 0) * Math.PI / 180;
+        var rCos = Math.cos(rAngle), rSin = Math.sin(rAngle);
+        var rLocalCorners = [[0, 0], [rW, 0], [rW, -rH], [0, -rH]];
+        for (var ri = 0; ri < 4; ri++) {
+          var rdx = rLocalCorners[ri][0], rdy = rLocalCorners[ri][1];
+          var rpx = rOx + rdx * rCos - rdy * rSin;
+          var rpy = rOy + rdx * rSin + rdy * rCos;
+          points.push({ x: rpx, y: rpy });
+          if (rpx < minX) minX = rpx; if (rpx > maxX) maxX = rpx;
+          if (rpy < minY) minY = rpy; if (rpy > maxY) maxY = rpy;
         }
-        for (var pi = 0; pi + 1 < nums.length; pi += 2) {
-          var px = nums[pi] * MIL_TO_MM;
-          var py = nums[pi + 1] * MIL_TO_MM;
-          points.push({ x: px, y: py });
-          if (px < minX) minX = px; if (px > maxX) maxX = px;
-          if (py < minY) minY = py; if (py > maxY) maxY = py;
+      }
+      // Circle: ["CIRCLE", cx, cy, r, ...]
+      else if (poly.length >= 4 && typeof poly[0] === 'string' && poly[0].toUpperCase() === 'CIRCLE') {
+        var ccx = poly[1] * MIL_TO_MM, ccy = poly[2] * MIL_TO_MM, cr = poly[3] * MIL_TO_MM;
+        if (cr > 0) {
+          for (var ci2 = 0; ci2 < 36; ci2++) {
+            var ca = ci2 / 36 * 2 * Math.PI;
+            var cpx2 = ccx + cr * Math.cos(ca), cpy2 = ccy + cr * Math.sin(ca);
+            points.push({ x: cpx2, y: cpy2 });
+            if (cpx2 < minX) minX = cpx2; if (cpx2 > maxX) maxX = cpx2;
+            if (cpy2 < minY) minY = cpy2; if (cpy2 > maxY) maxY = cpy2;
+          }
+        }
+      }
+      // Ellipse: ["ELLIPSE", cx, cy, rx, ry, ...]
+      else if (poly.length >= 5 && typeof poly[0] === 'string' && poly[0].toUpperCase() === 'ELLIPSE') {
+        var ecx = poly[1] * MIL_TO_MM, ecy = poly[2] * MIL_TO_MM;
+        var erx = poly[3] * MIL_TO_MM, ery = poly[4] * MIL_TO_MM;
+        if (erx > 0 && ery > 0) {
+          for (var ei2 = 0; ei2 < 36; ei2++) {
+            var ea = ei2 / 36 * 2 * Math.PI;
+            var epx2 = ecx + erx * Math.cos(ea), epy2 = ecy + ery * Math.sin(ea);
+            points.push({ x: epx2, y: epy2 });
+            if (epx2 < minX) minX = epx2; if (epx2 > maxX) maxX = epx2;
+            if (epy2 < minY) minY = epy2; if (epy2 > maxY) maxY = epy2;
+          }
+        }
+      }
+      else {
+        // General polygon: state machine parser with arc support
+        var pidx = 0;
+        var pCurX = 0, pCurY = 0;
+        while (pidx < poly.length) {
+          if (typeof poly[pidx] === 'string') {
+            var pcmd = poly[pidx].toUpperCase();
+            pidx++;
+            if (pcmd === 'A' || pcmd === 'ARC') {
+              if (pidx + 2 < poly.length && typeof poly[pidx] === 'number' &&
+                  typeof poly[pidx+1] === 'number' && typeof poly[pidx+2] === 'number') {
+                // Detect EasyEDA format (3 params: angle, endX, endY) vs SVG (7 params)
+                var isEdaArc = (pidx + 3 >= poly.length || typeof poly[pidx+3] === 'string');
+                if (isEdaArc) {
+                  // EasyEDA-style arc: "ARC", arcAngle, endX, endY
+                  var arcAngleDeg = poly[pidx];
+                  var aEndX = poly[pidx+1] * MIL_TO_MM;
+                  var aEndY = poly[pidx+2] * MIL_TO_MM;
+                  pidx += 3;
+                  var arcPts = _approxArcEda(pCurX, pCurY, aEndX, aEndY, arcAngleDeg, 18);
+                  for (var api2 = 0; api2 < arcPts.length; api2++) {
+                    points.push(arcPts[api2]);
+                    if (arcPts[api2].x < minX) minX = arcPts[api2].x;
+                    if (arcPts[api2].x > maxX) maxX = arcPts[api2].x;
+                    if (arcPts[api2].y < minY) minY = arcPts[api2].y;
+                    if (arcPts[api2].y > maxY) maxY = arcPts[api2].y;
+                  }
+                  pCurX = aEndX; pCurY = aEndY;
+                } else if (pidx + 6 < poly.length) {
+                  // SVG-style arc: rx, ry, rotation, largeArc, sweep, endX, endY
+                  var aRx = Math.abs(poly[pidx]) * MIL_TO_MM;
+                  var aRy = Math.abs(poly[pidx+1]) * MIL_TO_MM;
+                  var aLargeArc = poly[pidx+3];
+                  var aSweep = poly[pidx+4];
+                  var aEndX2 = poly[pidx+5] * MIL_TO_MM;
+                  var aEndY2 = poly[pidx+6] * MIL_TO_MM;
+                  pidx += 7;
+                  var arcPts2 = _approxArc(pCurX, pCurY, aEndX2, aEndY2, aRx, aRy, aLargeArc, aSweep, 18);
+                  for (var api3 = 0; api3 < arcPts2.length; api3++) {
+                    points.push(arcPts2[api3]);
+                    if (arcPts2[api3].x < minX) minX = arcPts2[api3].x;
+                    if (arcPts2[api3].x > maxX) maxX = arcPts2[api3].x;
+                    if (arcPts2[api3].y < minY) minY = arcPts2[api3].y;
+                    if (arcPts2[api3].y > maxY) maxY = arcPts2[api3].y;
+                  }
+                  pCurX = aEndX2; pCurY = aEndY2;
+                }
+              }
+              continue;
+            }
+            // "L", "M", etc: just skip the command string, next numbers are coords
+            continue;
+          }
+          if (typeof poly[pidx] === 'number' && pidx + 1 < poly.length && typeof poly[pidx+1] === 'number') {
+            var ppx = poly[pidx] * MIL_TO_MM;
+            var ppy = poly[pidx+1] * MIL_TO_MM;
+            points.push({ x: ppx, y: ppy });
+            pCurX = ppx; pCurY = ppy;
+            if (ppx < minX) minX = ppx; if (ppx > maxX) maxX = ppx;
+            if (ppy < minY) minY = ppy; if (ppy > maxY) maxY = ppy;
+            pidx += 2;
+          } else {
+            pidx++;
+          }
         }
       }
 
@@ -416,6 +504,65 @@ var edaEsbuildExportName = (() => {
         boundsHeight: maxY - minY,
         areaMm2: area
       };
+    }
+
+    // Approximate arc between two points with line segments (SVG-style)
+    function _approxArc(sx, sy, ex, ey, rx, ry, largeArc, sweep, nSegs) {
+      var pts = [];
+      var dx = ex - sx, dy = ey - sy;
+      var dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist < 1e-6) { pts.push({ x: ex, y: ey }); return pts; }
+      var r = Math.max(rx, ry) || dist / 2;
+      if (r < dist / 2) r = dist / 2;
+      var mx = (sx + ex) / 2, my = (sy + ey) / 2;
+      var halfChord = dist / 2;
+      var h = Math.sqrt(Math.max(0, r*r - halfChord*halfChord));
+      var nx = -dy / dist, ny = dx / dist;
+      // Choose center side based on sweep direction
+      var sign = (sweep ? 1 : -1);
+      if (largeArc) sign = -sign;
+      var cenX = mx + sign * h * nx, cenY = my + sign * h * ny;
+      var sa = Math.atan2(sy - cenY, sx - cenX);
+      var ea = Math.atan2(ey - cenY, ex - cenX);
+      var da = ea - sa;
+      if (sweep && da < 0) da += 2 * Math.PI;
+      if (!sweep && da > 0) da -= 2 * Math.PI;
+      for (var k = 1; k <= nSegs; k++) {
+        var t = k / nSegs;
+        var a = sa + t * da;
+        pts.push({ x: cenX + r * Math.cos(a), y: cenY + r * Math.sin(a) });
+      }
+      return pts;
+    }
+
+    // Approximate arc: EasyEDA-style "ARC", arcAngle, endX, endY
+    function _approxArcEda(sx, sy, ex, ey, arcAngleDeg, nSegs) {
+      var pts = [];
+      if (Math.abs(arcAngleDeg) < 0.01) { pts.push({ x: ex, y: ey }); return pts; }
+      var dx = ex - sx, dy = ey - sy;
+      var chord = Math.sqrt(dx * dx + dy * dy);
+      if (chord < 1e-9) { pts.push({ x: ex, y: ey }); return pts; }
+      var halfAngleRad = Math.abs(arcAngleDeg) * Math.PI / 360;
+      var sinHalf = Math.sin(halfAngleRad);
+      if (Math.abs(sinHalf) < 1e-9) { pts.push({ x: ex, y: ey }); return pts; }
+      var radius = chord / (2 * sinHalf);
+      var cosHalf = Math.cos(halfAngleRad);
+      var h = radius * cosHalf;
+      var mx = (sx + ex) / 2, my = (sy + ey) / 2;
+      var nx = -dy / chord, ny = dx / chord;
+      var sign = arcAngleDeg > 0 ? 1 : -1;
+      var cenX = mx + sign * h * nx, cenY = my + sign * h * ny;
+      var sa = Math.atan2(sy - cenY, sx - cenX);
+      var ea = Math.atan2(ey - cenY, ex - cenX);
+      var da = ea - sa;
+      if (arcAngleDeg < 0) { if (da > 0) da -= 2 * Math.PI; }
+      else { if (da < 0) da += 2 * Math.PI; }
+      for (var k = 1; k <= nSegs; k++) {
+        var t = k / nSegs;
+        var a = sa + t * da;
+        pts.push({ x: cenX + radius * Math.cos(a), y: cenY + radius * Math.sin(a) });
+      }
+      return pts;
     }
 
     // ── Extract board outline ──
@@ -473,22 +620,33 @@ var edaEsbuildExportName = (() => {
             if (!polyObj || !polyObj.polygon || !Array.isArray(polyObj.polygon)) continue;
             var poly = polyObj.polygon;
             if (poly[0] === 'R' && poly.length >= 5) {
-              var bx = poly[1] * MIL_TO_MM, by = poly[2] * MIL_TO_MM;
-              var bw = poly[3] * MIL_TO_MM, bh = poly[4] * MIL_TO_MM;
-              boardOutlinePoints = [
-                { x: bx, y: by - bh }, { x: bx + bw, y: by - bh },
-                { x: bx + bw, y: by }, { x: bx, y: by }
-              ];
+              var bOx = poly[1] * MIL_TO_MM, bOy = poly[2] * MIL_TO_MM;
+              var bW = poly[3] * MIL_TO_MM, bH = poly[4] * MIL_TO_MM;
+              var bAng = (poly.length >= 6 ? poly[5] : 0) * Math.PI / 180;
+              var bCos = Math.cos(bAng), bSin = Math.sin(bAng);
+              var bLocalCorners = [[0, 0], [bW, 0], [bW, -bH], [0, -bH]];
+              boardOutlinePoints = [];
+              for (var bci = 0; bci < 4; bci++) {
+                var bdx = bLocalCorners[bci][0], bdy = bLocalCorners[bci][1];
+                boardOutlinePoints.push({ x: bOx + bdx * bCos - bdy * bSin, y: bOy + bdx * bSin + bdy * bCos });
+              }
             } else {
-              var bNums = [];
-              for (var bni = 0; bni < poly.length; bni++) {
-                if (typeof poly[bni] === 'number') bNums.push(poly[bni]);
+              // Use parseComplexPolygon to handle arcs and complex shapes
+              var parsedOutline = parseComplexPolygon(polyObj);
+              if (parsedOutline && parsedOutline.outlinePoints && parsedOutline.outlinePoints.length >= 3) {
+                boardOutlinePoints = parsedOutline.outlinePoints;
+              } else {
+                // Fallback: extract raw number pairs
+                var bNums = [];
+                for (var bni = 0; bni < poly.length; bni++) {
+                  if (typeof poly[bni] === 'number') bNums.push(poly[bni]);
+                }
+                var bPts = [];
+                for (var bni2 = 0; bni2 + 1 < bNums.length; bni2 += 2) {
+                  bPts.push({ x: bNums[bni2] * MIL_TO_MM, y: bNums[bni2 + 1] * MIL_TO_MM });
+                }
+                if (bPts.length >= 3) boardOutlinePoints = bPts;
               }
-              var bPts = [];
-              for (var bni2 = 0; bni2 + 1 < bNums.length; bni2 += 2) {
-                bPts.push({ x: bNums[bni2] * MIL_TO_MM, y: bNums[bni2 + 1] * MIL_TO_MM });
-              }
-              if (bPts.length >= 3) boardOutlinePoints = bPts;
             }
             if (boardOutlinePoints.length >= 3) { boardOutlineDebug.method = 'polyline'; break; }
           }
@@ -552,8 +710,22 @@ var edaEsbuildExportName = (() => {
 
         if (!boardOutlineDebug.method) boardOutlineDebug.method = 'none';
         boardOutlineDebug.finalPoints = boardOutlinePoints.length;
+        // Dump raw polyline polygon for debugging arc format
+        try {
+          if (olPolylines.length > 0) {
+            var dbgPl = olPolylines[0].polygon;
+            var dbgObj = null;
+            if (typeof dbgPl === 'string') dbgObj = JSON.parse(dbgPl);
+            else if (typeof dbgPl === 'object') dbgObj = dbgPl;
+            if (dbgObj && dbgObj.polygon) boardOutlineDebug.rawPolygon = dbgObj.polygon.slice(0, 60);
+          }
+        } catch(e) {}
       }
     } catch(e) { boardOutlineDebug.error = e.message || String(e); }
+    // Filter out any null/NaN points
+    boardOutlinePoints = boardOutlinePoints.filter(function(p) {
+      return p && typeof p.x === 'number' && typeof p.y === 'number' && !isNaN(p.x) && !isNaN(p.y);
+    });
     result.boardOutline = boardOutlinePoints.length >= 3 ? boardOutlinePoints : null;
     result._debugApis.boardOutlineDebug = boardOutlineDebug;
 
@@ -599,9 +771,17 @@ var edaEsbuildExportName = (() => {
       captureSample('Pour', pours);
 
       for (var i = 0; i < pours.length; i++) {
+        var pourDbg = { id: null, layer: null, isCopperLayer: false, net: null, polyFormat: null, parsedOk: false, addedAsZone: false, rejectReason: null };
         try {
           var pour = pours[i];
-          if (!isCopperLayer(pour.layer)) continue;
+          pourDbg.id = pour.primitiveId;
+          pourDbg.layer = pour.layer;
+          pourDbg.layerName = result.apiLayerNames[pour.layer] || null;
+          pourDbg.net = pour.net;
+          pourDbg.isCopperLayer = isCopperLayer(pour.layer);
+          try { pourDbg.polyFormat = pour.complexPolygon && pour.complexPolygon.polygon ? pour.complexPolygon.polygon.slice(0, 15) : null; } catch(e2) {}
+          try { pourDbg.hasBoundsApi = !!pour.bounds; } catch(e2) {}
+          if (!isCopperLayer(pour.layer)) { pourDbg.rejectReason = 'non-copper layer'; result._debugAllPours.push(pourDbg); continue; }
           var zoneEntry = {
             type: "ZONE",
             subType: "Pour",
@@ -626,36 +806,6 @@ var edaEsbuildExportName = (() => {
             }
           } catch(e) {}
           if (parsed) {
-            var pts = parsed.outlinePoints;
-
-            // Clip to board outline if available
-            if (boardOutlinePoints.length >= 3 && pts.length >= 3) {
-              var clipped = clipPolygon(pts, boardOutlinePoints);
-              if (clipped.length >= 3) {
-                pts = clipped;
-                // Recompute bounds and area
-                var cMinX = Infinity, cMinY = Infinity, cMaxX = -Infinity, cMaxY = -Infinity;
-                var cArea = 0;
-                for (var cpi = 0; cpi < pts.length; cpi++) {
-                  if (pts[cpi].x < cMinX) cMinX = pts[cpi].x;
-                  if (pts[cpi].x > cMaxX) cMaxX = pts[cpi].x;
-                  if (pts[cpi].y < cMinY) cMinY = pts[cpi].y;
-                  if (pts[cpi].y > cMaxY) cMaxY = pts[cpi].y;
-                  var cnext = (cpi + 1) % pts.length;
-                  cArea += pts[cpi].x * pts[cnext].y;
-                  cArea -= pts[cnext].x * pts[cpi].y;
-                }
-                cArea = Math.abs(cArea) / 2;
-                parsed = {
-                  outlinePoints: pts,
-                  bounds: { minX: cMinX, minY: cMinY, maxX: cMaxX, maxY: cMaxY },
-                  boundsWidth: cMaxX - cMinX,
-                  boundsHeight: cMaxY - cMinY,
-                  areaMm2: cArea
-                };
-              }
-            }
-
             zoneEntry.outlinePoints = parsed.outlinePoints;
             zoneEntry.bounds = parsed.bounds;
             zoneEntry.boundsWidth = parsed.boundsWidth;
@@ -685,7 +835,11 @@ var edaEsbuildExportName = (() => {
           try { if (pour.width) zoneEntry.width = pour.width * MIL_TO_MM; } catch(e) {}
 
           if (zoneEntry.bounds) result.zones.push(zoneEntry);
-        } catch (e) {}
+          pourDbg.parsedOk = !!parsed;
+          pourDbg.addedAsZone = !!zoneEntry.bounds;
+          if (!zoneEntry.bounds) pourDbg.rejectReason = 'no bounds after parsing';
+          result._debugAllPours.push(pourDbg);
+        } catch (e) { pourDbg.rejectReason = 'exception: ' + (e && e.message ? e.message : String(e)); result._debugAllPours.push(pourDbg); }
       }
     } catch (e) {}
 
@@ -694,9 +848,17 @@ var edaEsbuildExportName = (() => {
       var fills = await eda.pcb_PrimitiveFill.getAll();
       captureSample('Fill', fills);
       for (var i = 0; i < fills.length; i++) {
+        var fillDbg = { id: null, layer: null, isCopperLayer: false, net: null, polyFormat: null, parsedOk: false, addedAsZone: false, rejectReason: null };
         try {
           var fill = fills[i];
-          if (!isCopperLayer(fill.layer)) continue;
+          fillDbg.id = fill.primitiveId;
+          fillDbg.layer = fill.layer;
+          fillDbg.layerName = result.apiLayerNames[fill.layer] || null;
+          fillDbg.net = fill.net;
+          fillDbg.isCopperLayer = isCopperLayer(fill.layer);
+          try { fillDbg.polyFormat = fill.complexPolygon && fill.complexPolygon.polygon ? fill.complexPolygon.polygon.slice(0, 15) : null; } catch(e2) {}
+          try { fillDbg.hasBoundsApi = !!fill.bounds; } catch(e2) {}
+          if (!isCopperLayer(fill.layer)) { fillDbg.rejectReason = 'non-copper layer'; result._debugAllFills.push(fillDbg); continue; }
           var fillEntry = {
             type: "ZONE",
             subType: "Fill",
@@ -720,43 +882,39 @@ var edaEsbuildExportName = (() => {
             }
           } catch(e) {}
           if (parsed) {
-            var pts = parsed.outlinePoints;
-
-            // Clip to board outline if available
-            if (boardOutlinePoints.length >= 3 && pts.length >= 3) {
-              var clipped = clipPolygon(pts, boardOutlinePoints);
-              if (clipped.length >= 3) {
-                pts = clipped;
-                var cMinX = Infinity, cMinY = Infinity, cMaxX = -Infinity, cMaxY = -Infinity;
-                var cArea = 0;
-                for (var cpi = 0; cpi < pts.length; cpi++) {
-                  if (pts[cpi].x < cMinX) cMinX = pts[cpi].x;
-                  if (pts[cpi].x > cMaxX) cMaxX = pts[cpi].x;
-                  if (pts[cpi].y < cMinY) cMinY = pts[cpi].y;
-                  if (pts[cpi].y > cMaxY) cMaxY = pts[cpi].y;
-                  var cnext = (cpi + 1) % pts.length;
-                  cArea += pts[cpi].x * pts[cnext].y;
-                  cArea -= pts[cnext].x * pts[cpi].y;
-                }
-                cArea = Math.abs(cArea) / 2;
-                parsed = {
-                  outlinePoints: pts,
-                  bounds: { minX: cMinX, minY: cMinY, maxX: cMaxX, maxY: cMaxY },
-                  boundsWidth: cMaxX - cMinX,
-                  boundsHeight: cMaxY - cMinY,
-                  areaMm2: cArea
-                };
-              }
-            }
-
             fillEntry.outlinePoints = parsed.outlinePoints;
             fillEntry.bounds = parsed.bounds;
             fillEntry.boundsWidth = parsed.boundsWidth;
             fillEntry.boundsHeight = parsed.boundsHeight;
             fillEntry.areaMm2 = parsed.areaMm2;
           }
+
+          // Bounds fallback: use API bounds if parsing failed
+          if (!fillEntry.bounds) {
+            try {
+              if (fill.bounds) {
+                var fb = fill.bounds;
+                fillEntry.bounds = {
+                  minX: (fb.minX !== undefined ? fb.minX : fb.x) * MIL_TO_MM,
+                  minY: (fb.minY !== undefined ? fb.minY : fb.y) * MIL_TO_MM,
+                  maxX: (fb.maxX !== undefined ? fb.maxX : (fb.x + fb.width)) * MIL_TO_MM,
+                  maxY: (fb.maxY !== undefined ? fb.maxY : (fb.y + fb.height)) * MIL_TO_MM
+                };
+                fillEntry.boundsWidth = Math.abs(fillEntry.bounds.maxX - fillEntry.bounds.minX);
+                fillEntry.boundsHeight = Math.abs(fillEntry.bounds.maxY - fillEntry.bounds.minY);
+              }
+            } catch(e) {}
+          }
+          if (!fillEntry.areaMm2) {
+            try { if (fill.area) fillEntry.areaMm2 = fill.area * MIL_TO_MM * MIL_TO_MM; } catch(e) {}
+          }
+
           if (fillEntry.bounds) result.zones.push(fillEntry);
-        } catch (e) {}
+          fillDbg.parsedOk = !!parsed;
+          fillDbg.addedAsZone = !!fillEntry.bounds;
+          if (!fillEntry.bounds) fillDbg.rejectReason = 'no bounds after parsing + fallback';
+          result._debugAllFills.push(fillDbg);
+        } catch (e) { fillDbg.rejectReason = 'exception: ' + (e && e.message ? e.message : String(e)); result._debugAllFills.push(fillDbg); }
       }
     } catch (e) {}
 
