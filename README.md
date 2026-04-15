@@ -94,6 +94,12 @@ $zip.Dispose()
 4. Click **Visualize** to open the heatmap
 
 ## Changelog
+### v1.11.0
+- **Diagonal cross-section measurement** — zone/pour current analysis now measures in 4 directions (horizontal, vertical, 45°, 135°) instead of just 2. The effective width is `min(↔, ↕, ⟋, ⟍)`, catching diagonal bottlenecks near angled polygon edges and concave board outline regions. Fixes false current jumps (e.g. ~60A → 100A+) at diagonal pour boundaries where H/V-only measurement missed the real narrowing.
+- **Board outline clipping for diagonals** — diagonal scan lines are clipped against the board outline, same as H/V measurements.
+- **Diagonal obstacle subtraction** — holes, trace obstacles, pad obstacles, and other-net zone obstacles are projected onto diagonal scan lines for accurate net copper width.
+- **Hover info with diagonal widths** — zone cell hover now displays ⟋ (45°) and ⟍ (135°) widths alongside ↔ and ↕ for both Total and Segment modes.
+
 ### v1.10.0
 - **Board outline arc support** — EasyEDA Pro uses a 3-parameter ARC format (`ARC, arcAngle, endX, endY`) for rounded corners in board outlines. New `_approxArcEda()` function correctly approximates these arcs, so boards with rounded corners now display the correct outline shape.
 - **R-rectangle rotation fix** — the `"R"` polygon format (`R, x, y, w, h, rotation, cornerRadius`) now uses origin-based rotation: the rectangle extends from `(x,y)` with width right and height downward, then rotates around the origin. Fixes pour/fill positioning and angle for rotated zones.

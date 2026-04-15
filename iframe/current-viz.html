@@ -379,7 +379,8 @@ function recalculate() {
           var subYStep = yStep / subN;
 
           var bestTotalEff = Infinity, bestSegEff = Infinity;
-          var bestTotalWH = 0, bestTotalHV = 0, bestSegWH = 0, bestSegHV = 0;
+          var bestTotalWH = 0, bestTotalHV = 0, bestTotalWD45 = 0, bestTotalWD135 = 0;
+          var bestSegWH = 0, bestSegHV = 0, bestSegWD45 = 0, bestSegWD135 = 0;
           var hasValidSub = false;
 
           for (var sy = 0; sy < subN; sy++) {
@@ -406,23 +407,41 @@ function recalculate() {
               var wH = mergedLocalWidthAtY(mergedXI, scx);
               var hV = mergedLocalHeightAtX(mergedYI, scy);
 
+              // Diagonal measurements (45° and 135° scan lines)
+              var sVal = scx + scy, dVal = scx - scy;
+              var mergedD45I = getMergedDiag45Intersections(allPtsList, sVal);
+              mergedD45I = clipDiag45SpansWithBoard(mergedD45I, sVal);
+              var mergedD135I = getMergedDiag135Intersections(allPtsList, dVal);
+              mergedD135I = clipDiag135SpansWithBoard(mergedD135I, dVal);
+
+              var rawD45 = mergedLocalDiagRawWidth(mergedD45I, scx);
+              var rawD135 = mergedLocalDiagRawWidth(mergedD135I, scx);
+
               // Collect obstacles (includes pad obstacles)
               var obsH = collectObsAtY(scy, holes, traceObs, clearance, zoneObs, padObs);
               var obsV = collectObsAtX(scx, holes, traceObs, clearance, zoneObs, padObs);
+              var obsD45 = collectObsAtDiag45(sVal, holes, traceObs, clearance, zoneObs, padObs);
+              var obsD135 = collectObsAtDiag135(dVal, holes, traceObs, clearance, zoneObs, padObs);
 
               // Total mode: subtract merged obstacle widths
               var tWH = subtractObsFromSpan(wH, mergedXI, scx, obsH);
               var tHV = subtractObsFromSpan(hV, mergedYI, scy, obsV);
-              var te = Math.min(tWH, tHV);
+              var tRawD45 = subtractObsFromSpan(rawD45, mergedD45I, scx, obsD45);
+              var tRawD135 = subtractObsFromSpan(rawD135, mergedD135I, scx, obsD135);
+              var tWD45 = tRawD45 * Math.SQRT2;
+              var tWD135 = tRawD135 * Math.SQRT2;
+              var te = Math.min(tWH, tHV, tWD45, tWD135);
 
               // Segment mode: find segment between obstacles
               var sWH = segmentWithObs(mergedXI, scx, obsH);
               var sHV = segmentWithObs(mergedYI, scy, obsV);
-              var se = Math.min(sWH, sHV);
+              var sWD45 = segmentWithObs(mergedD45I, scx, obsD45) * Math.SQRT2;
+              var sWD135 = segmentWithObs(mergedD135I, scx, obsD135) * Math.SQRT2;
+              var se = Math.min(sWH, sHV, sWD45, sWD135);
 
               hasValidSub = true;
-              if (te > 0 && te < bestTotalEff) { bestTotalEff = te; bestTotalWH = tWH; bestTotalHV = tHV; }
-              if (se > 0 && se < bestSegEff) { bestSegEff = se; bestSegWH = sWH; bestSegHV = sHV; }
+              if (te > 0 && te < bestTotalEff) { bestTotalEff = te; bestTotalWH = tWH; bestTotalHV = tHV; bestTotalWD45 = tWD45; bestTotalWD135 = tWD135; }
+              if (se > 0 && se < bestSegEff) { bestSegEff = se; bestSegWH = sWH; bestSegHV = sHV; bestSegWD45 = sWD45; bestSegWD135 = sWD135; }
             }
           }
           if (!hasValidSub) continue;
@@ -441,8 +460,8 @@ function recalculate() {
             x0: bMinX + gx * xStep, y0: bMinY + gy * yStep,
             x1: bMinX + (gx + 1) * xStep, y1: bMinY + (gy + 1) * yStep,
             gx: gx, gy: gy,
-            widthH: bestTotalWH, heightV: bestTotalHV, effWidth: bestTotalEff, iMax: totalIMax,
-            segWidthH: bestSegWH, segHeightV: bestSegHV, segEff: bestSegEff, segIMax: segIMax
+            widthH: bestTotalWH, heightV: bestTotalHV, widthD45: bestTotalWD45, widthD135: bestTotalWD135, effWidth: bestTotalEff, iMax: totalIMax,
+            segWidthH: bestSegWH, segHeightV: bestSegHV, segWidthD45: bestSegWD45, segWidthD135: bestSegWD135, segEff: bestSegEff, segIMax: segIMax
           });
           if (iMax < minCellI) minCellI = iMax;
         }
@@ -853,6 +872,317 @@ function recalculate() {
       }
     }
     return 0;
+  }
+
+  // ── Diagonal scan-line intersection functions (45° and 135°) ──
+  // Scan line x+y=s: returns sorted x-coordinates of polygon crossings
+  function getDiag45Intersections(pts, s) {
+    var xs = [];
+    for (var i = 0; i < pts.length; i++) {
+      var j = (i + 1) % pts.length;
+      var si = pts[i].x + pts[i].y, sj = pts[j].x + pts[j].y;
+      if ((si <= s && sj > s) || (sj <= s && si > s)) {
+        var t = (s - si) / (sj - si);
+        xs.push(pts[i].x + t * (pts[j].x - pts[i].x));
+      }
+    }
+    xs.sort(function(a, b) { return a - b; });
+    return xs;
+  }
+
+  // Scan line x-y=d: returns sorted x-coordinates of polygon crossings
+  function getDiag135Intersections(pts, d) {
+    var xs = [];
+    for (var i = 0; i < pts.length; i++) {
+      var j = (i + 1) % pts.length;
+      var di = pts[i].x - pts[i].y, dj = pts[j].x - pts[j].y;
+      if ((di <= d && dj > d) || (dj <= d && di > d)) {
+        var t = (d - di) / (dj - di);
+        xs.push(pts[i].x + t * (pts[j].x - pts[i].x));
+      }
+    }
+    xs.sort(function(a, b) { return a - b; });
+    return xs;
+  }
+
+  function getMergedDiag45Intersections(allPtsList, s) {
+    var spans = [];
+    for (var p = 0; p < allPtsList.length; p++) {
+      var xs = getDiag45Intersections(allPtsList[p], s);
+      for (var i = 0; i + 1 < xs.length; i += 2) {
+        spans.push({ l: xs[i], r: xs[i + 1] });
+      }
+    }
+    spans.sort(function(a, b) { return a.l - b.l; });
+    var merged = [];
+    for (var i = 0; i < spans.length; i++) {
+      if (merged.length > 0 && spans[i].l <= merged[merged.length - 1]) {
+        merged[merged.length - 1] = Math.max(merged[merged.length - 1], spans[i].r);
+      } else { merged.push(spans[i].l, spans[i].r); }
+    }
+    return merged;
+  }
+
+  function getMergedDiag135Intersections(allPtsList, d) {
+    var spans = [];
+    for (var p = 0; p < allPtsList.length; p++) {
+      var xs = getDiag135Intersections(allPtsList[p], d);
+      for (var i = 0; i + 1 < xs.length; i += 2) {
+        spans.push({ l: xs[i], r: xs[i + 1] });
+      }
+    }
+    spans.sort(function(a, b) { return a.l - b.l; });
+    var merged = [];
+    for (var i = 0; i < spans.length; i++) {
+      if (merged.length > 0 && spans[i].l <= merged[merged.length - 1]) {
+        merged[merged.length - 1] = Math.max(merged[merged.length - 1], spans[i].r);
+      } else { merged.push(spans[i].l, spans[i].r); }
+    }
+    return merged;
+  }
+
+  function clipDiag45SpansWithBoard(spans, s) {
+    if (!pcbData.boardOutline || pcbData.boardOutline.length < 3) return spans;
+    var boardInts = getDiag45Intersections(pcbData.boardOutline, s);
+    if (boardInts.length < 2) return [];
+    var result = [];
+    for (var i = 0; i + 1 < spans.length; i += 2) {
+      for (var j = 0; j + 1 < boardInts.length; j += 2) {
+        var lo = Math.max(spans[i], boardInts[j]);
+        var hi = Math.min(spans[i + 1], boardInts[j + 1]);
+        if (lo < hi) { result.push(lo, hi); }
+      }
+    }
+    return result;
+  }
+
+  function clipDiag135SpansWithBoard(spans, d) {
+    if (!pcbData.boardOutline || pcbData.boardOutline.length < 3) return spans;
+    var boardInts = getDiag135Intersections(pcbData.boardOutline, d);
+    if (boardInts.length < 2) return [];
+    var result = [];
+    for (var i = 0; i + 1 < spans.length; i += 2) {
+      for (var j = 0; j + 1 < boardInts.length; j += 2) {
+        var lo = Math.max(spans[i], boardInts[j]);
+        var hi = Math.min(spans[i + 1], boardInts[j + 1]);
+        if (lo < hi) { result.push(lo, hi); }
+      }
+    }
+    return result;
+  }
+
+  // Returns raw x-coordinate span width (multiply by √2 for physical mm)
+  function mergedLocalDiagRawWidth(mergedInts, px) {
+    for (var i = 0; i + 1 < mergedInts.length; i += 2) {
+      if (px >= mergedInts[i] && px <= mergedInts[i + 1])
+        return mergedInts[i + 1] - mergedInts[i];
+    }
+    return 0;
+  }
+
+  // ── Diagonal capsule range functions ──
+  function capsuleDiag45Range(x1, y1, x2, y2, r, s) {
+    var dx = x2 - x1, dy = y2 - y1;
+    var L2 = dx*dx + dy*dy;
+    var xMin = Infinity, xMax = -Infinity;
+    function chk(t) {
+      if (t < 0 || t > 1) return;
+      var cx = x1 + t * dx, cy = y1 + t * dy;
+      var dv = cx + cy - s;
+      var inside = 2*r*r - dv*dv;
+      if (inside <= 0) return;
+      var xCenter = (cx - cy + s) / 2;
+      var xHalf = Math.sqrt(inside) / 2;
+      if (xCenter - xHalf < xMin) xMin = xCenter - xHalf;
+      if (xCenter + xHalf > xMax) xMax = xCenter + xHalf;
+    }
+    chk(0); chk(1);
+    var dxdy = dx + dy;
+    if (L2 > 1e-12 && Math.abs(dxdy) > 1e-10) {
+      chk((s - x1 - y1) / dxdy);
+      var a = dx - dy, b = dxdy, ab2 = a*a + b*b;
+      if (ab2 > 1e-12) {
+        var dc = r * Math.abs(a) * Math.SQRT2 / Math.sqrt(ab2);
+        chk((dc - (x1+y1-s)) / b);
+        chk((-dc - (x1+y1-s)) / b);
+      }
+    }
+    return xMin <= xMax ? [xMin, xMax] : null;
+  }
+
+  function capsuleDiag135Range(x1, y1, x2, y2, r, D) {
+    var dx = x2 - x1, dy = y2 - y1;
+    var L2 = dx*dx + dy*dy;
+    var xMin = Infinity, xMax = -Infinity;
+    function chk(t) {
+      if (t < 0 || t > 1) return;
+      var cx = x1 + t * dx, cy = y1 + t * dy;
+      var dv = cx - cy - D;
+      var inside = 2*r*r - dv*dv;
+      if (inside <= 0) return;
+      var xCenter = (cx + cy + D) / 2;
+      var xHalf = Math.sqrt(inside) / 2;
+      if (xCenter - xHalf < xMin) xMin = xCenter - xHalf;
+      if (xCenter + xHalf > xMax) xMax = xCenter + xHalf;
+    }
+    chk(0); chk(1);
+    var dxdy = dx - dy;
+    if (L2 > 1e-12 && Math.abs(dxdy) > 1e-10) {
+      chk((D - x1 + y1) / dxdy);
+      var a = dx + dy, b = dxdy, ab2 = a*a + b*b;
+      if (ab2 > 1e-12) {
+        var dc = r * Math.abs(a) * Math.SQRT2 / Math.sqrt(ab2);
+        chk((dc - (x1-y1-D)) / b);
+        chk((-dc - (x1-y1-D)) / b);
+      }
+    }
+    return xMin <= xMax ? [xMin, xMax] : null;
+  }
+
+  // ── Diagonal obstacle collection ──
+  function collectObsAtDiag45(s, holes, traceObs, clr, zoneObs, padObs) {
+    var obs = [];
+    for (var i = 0; i < holes.length; i++) {
+      var h = holes[i], r = h.diameter / 2;
+      var dv = h.x + h.y - s;
+      var inside = 2*r*r - dv*dv;
+      if (inside <= 0) continue;
+      var xCenter = (h.x - h.y + s) / 2;
+      var xHalf = Math.sqrt(inside) / 2;
+      obs.push({ l: xCenter - xHalf, r: xCenter + xHalf });
+    }
+    for (var i = 0; i < traceObs.length; i++) {
+      var tr = traceObs[i];
+      var tRad = tr.width / 2 + clr;
+      var range = capsuleDiag45Range(tr.x1, tr.y1, tr.x2, tr.y2, tRad, s);
+      if (range) obs.push({ l: range[0], r: range[1] });
+    }
+    if (padObs) {
+      for (var pi = 0; pi < padObs.length; pi++) {
+        var po = padObs[pi];
+        var pr = Math.sqrt(po.width*po.width + po.height*po.height) / 2 + clr;
+        var dv = po.x + po.y - s;
+        var inside = 2*pr*pr - dv*dv;
+        if (inside <= 0) continue;
+        var xCenter = (po.x - po.y + s) / 2;
+        var xHalf = Math.sqrt(inside) / 2;
+        obs.push({ l: xCenter - xHalf, r: xCenter + xHalf });
+      }
+    }
+    if (zoneObs) {
+      for (var zi = 0; zi < zoneObs.length; zi++) {
+        var zo = zoneObs[zi];
+        var zoSmin = zo.bounds.minX + zo.bounds.minY;
+        var zoSmax = zo.bounds.maxX + zo.bounds.maxY;
+        if (s < zoSmin - clr*2 || s > zoSmax + clr*2) continue;
+        var xRanges = getZoneObsDiag45Ranges(zo.pts, s, clr, zo.fullArea);
+        for (var ri = 0; ri < xRanges.length; ri++) {
+          obs.push({ l: xRanges[ri].l, r: xRanges[ri].r });
+        }
+      }
+    }
+    return obs;
+  }
+
+  function collectObsAtDiag135(D, holes, traceObs, clr, zoneObs, padObs) {
+    var obs = [];
+    for (var i = 0; i < holes.length; i++) {
+      var h = holes[i], r = h.diameter / 2;
+      var dv = h.x - h.y - D;
+      var inside = 2*r*r - dv*dv;
+      if (inside <= 0) continue;
+      var xCenter = (h.x + h.y + D) / 2;
+      var xHalf = Math.sqrt(inside) / 2;
+      obs.push({ l: xCenter - xHalf, r: xCenter + xHalf });
+    }
+    for (var i = 0; i < traceObs.length; i++) {
+      var tr = traceObs[i];
+      var tRad = tr.width / 2 + clr;
+      var range = capsuleDiag135Range(tr.x1, tr.y1, tr.x2, tr.y2, tRad, D);
+      if (range) obs.push({ l: range[0], r: range[1] });
+    }
+    if (padObs) {
+      for (var pi = 0; pi < padObs.length; pi++) {
+        var po = padObs[pi];
+        var pr = Math.sqrt(po.width*po.width + po.height*po.height) / 2 + clr;
+        var dv = po.x - po.y - D;
+        var inside = 2*pr*pr - dv*dv;
+        if (inside <= 0) continue;
+        var xCenter = (po.x + po.y + D) / 2;
+        var xHalf = Math.sqrt(inside) / 2;
+        obs.push({ l: xCenter - xHalf, r: xCenter + xHalf });
+      }
+    }
+    if (zoneObs) {
+      for (var zi = 0; zi < zoneObs.length; zi++) {
+        var zo = zoneObs[zi];
+        var zoDmin = zo.bounds.minX - zo.bounds.maxY;
+        var zoDmax = zo.bounds.maxX - zo.bounds.minY;
+        if (D < zoDmin - clr*2 || D > zoDmax + clr*2) continue;
+        var xRanges = getZoneObsDiag135Ranges(zo.pts, D, clr, zo.fullArea);
+        for (var ri = 0; ri < xRanges.length; ri++) {
+          obs.push({ l: xRanges[ri].l, r: xRanges[ri].r });
+        }
+      }
+    }
+    return obs;
+  }
+
+  // ── Zone obstacle helpers for diagonals ──
+  function getZoneObsDiag45Ranges(pts, s, clr, fullArea) {
+    var perpOffset = clr * Math.SQRT2;
+    var lineExpand = clr / Math.SQRT2;
+    var ranges = [];
+    if (fullArea) {
+      var offsets = [-perpOffset, 0, perpOffset];
+      for (var oi = 0; oi < offsets.length; oi++) {
+        var xs = getDiag45Intersections(pts, s + offsets[oi]);
+        for (var i = 0; i + 1 < xs.length; i += 2) {
+          ranges.push({ l: xs[i] - lineExpand, r: xs[i + 1] + lineExpand });
+        }
+      }
+    } else {
+      var xs = getDiag45Intersections(pts, s);
+      for (var i = 0; i < xs.length; i++) {
+        ranges.push({ l: xs[i] - lineExpand, r: xs[i] + lineExpand });
+      }
+    }
+    ranges.sort(function(a, b) { return a.l - b.l; });
+    var merged = [];
+    for (var i = 0; i < ranges.length; i++) {
+      if (merged.length > 0 && ranges[i].l <= merged[merged.length - 1].r) {
+        merged[merged.length - 1].r = Math.max(merged[merged.length - 1].r, ranges[i].r);
+      } else { merged.push({ l: ranges[i].l, r: ranges[i].r }); }
+    }
+    return merged;
+  }
+
+  function getZoneObsDiag135Ranges(pts, D, clr, fullArea) {
+    var perpOffset = clr * Math.SQRT2;
+    var lineExpand = clr / Math.SQRT2;
+    var ranges = [];
+    if (fullArea) {
+      var offsets = [-perpOffset, 0, perpOffset];
+      for (var oi = 0; oi < offsets.length; oi++) {
+        var xs = getDiag135Intersections(pts, D + offsets[oi]);
+        for (var i = 0; i + 1 < xs.length; i += 2) {
+          ranges.push({ l: xs[i] - lineExpand, r: xs[i + 1] + lineExpand });
+        }
+      }
+    } else {
+      var xs = getDiag135Intersections(pts, D);
+      for (var i = 0; i < xs.length; i++) {
+        ranges.push({ l: xs[i] - lineExpand, r: xs[i] + lineExpand });
+      }
+    }
+    ranges.sort(function(a, b) { return a.l - b.l; });
+    var merged = [];
+    for (var i = 0; i < ranges.length; i++) {
+      if (merged.length > 0 && ranges[i].l <= merged[merged.length - 1].r) {
+        merged[merged.length - 1].r = Math.max(merged[merged.length - 1].r, ranges[i].r);
+      } else { merged.push({ l: ranges[i].l, r: ranges[i].r }); }
+    }
+    return merged;
   }
 
   // Compute dynamic max current from all traces + zone cells
@@ -1368,8 +1698,14 @@ function draw() {
     var dimStr = '';
     if (hoveredTrace.type === 'ZONE' && hoveredTrace.widthH !== null && hoveredTrace.heightV !== null) {
       dimStr = ' | T-H: ↔' + hoveredTrace.widthH.toFixed(2) + '↕' + hoveredTrace.heightV.toFixed(2);
+      if (hoveredTrace.widthD45 != null) {
+        dimStr += ' ⟋' + hoveredTrace.widthD45.toFixed(2) + '⟍' + (hoveredTrace.widthD135 != null ? hoveredTrace.widthD135.toFixed(2) : '-');
+      }
       if (hoveredTrace.segWidthH !== null && hoveredTrace.segHeightV !== null) {
         dimStr += ' | Seg: ↔' + hoveredTrace.segWidthH.toFixed(2) + '↕' + hoveredTrace.segHeightV.toFixed(2);
+        if (hoveredTrace.segWidthD45 != null) {
+          dimStr += ' ⟋' + hoveredTrace.segWidthD45.toFixed(2) + '⟍' + (hoveredTrace.segWidthD135 != null ? hoveredTrace.segWidthD135.toFixed(2) : '-');
+        }
       }
     }
     label.innerHTML = '<strong>' + iStr + '</strong> | ' +
@@ -1613,8 +1949,12 @@ function findTraceAt(sx, sy) {
       width: cellData ? (useSegFind ? cellData.segEff : cellData.effWidth) : (z.boundsWidth || 0),
       widthH: cellData ? cellData.widthH : null,
       heightV: cellData ? cellData.heightV : null,
+      widthD45: cellData ? cellData.widthD45 : null,
+      widthD135: cellData ? cellData.widthD135 : null,
       segWidthH: cellData ? cellData.segWidthH : null,
       segHeightV: cellData ? cellData.segHeightV : null,
+      segWidthD45: cellData ? cellData.segWidthD45 : null,
+      segWidthD135: cellData ? cellData.segWidthD135 : null,
       bounds: z.bounds,
       stripIMax: cellI
     };

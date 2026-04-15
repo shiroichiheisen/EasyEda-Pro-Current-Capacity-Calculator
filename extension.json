@@ -3,7 +3,7 @@
 	"uuid": "c4d8e2f1a6b34d7e9c0f5a2b8e1d3c7f",
 	"displayName": "PCB Trace Current Capacity Calculator",
 	"description": "Calculates the maximum current capacity of each PCB trace based on IPC-2221B standard, with canvas visualization",
-	"version": "1.10.0",
+	"version": "1.11.0",
 	"publisher": "",
 	"engines": {
 		"eda": "^3.0.0"
