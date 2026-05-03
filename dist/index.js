@@ -25,7 +25,7 @@ var edaEsbuildExportName = (() => {
     runCurrentCalc: () => runCurrentCalc
   });
 
-  var version = "1.3.0";
+  var version = "1.11.1";
 
   function activate(_status, _arg) {}
 
