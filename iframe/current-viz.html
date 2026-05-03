@@ -162,6 +162,56 @@ var lastMouseX = 0, lastMouseY = 0;
 var selectedNet = null;
 var zoneGrids = {}; // id → { cells: [...], pts: [...] }
 
+var STORAGE_KEYS = [VIZ_STORAGE_KEY, 'current-capacity-data', 'current-capacity-stackup'];
+
+function hasOwnPropertyOf(value, key) {
+  return value && typeof value === 'object' && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function looksLikeStorageRoot(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  for (var i = 0; i < STORAGE_KEYS.length; i++) {
+    if (Object.prototype.hasOwnProperty.call(value, STORAGE_KEYS[i])) return true;
+  }
+  return false;
+}
+
+function looksLikeStoredValue(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) && (
+    Object.prototype.hasOwnProperty.call(value, 'pcbData') ||
+    Object.prototype.hasOwnProperty.call(value, 'analysisData') ||
+    Object.prototype.hasOwnProperty.call(value, 'stackup') ||
+    Object.prototype.hasOwnProperty.call(value, 'deltaT')
+  );
+}
+
+function storageGetLocal(key) {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    var raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) {
+    return null;
+  }
+}
+
+async function storageGet(key) {
+  var localValue = storageGetLocal(key);
+  if (localValue !== null) return localValue;
+  if (typeof eda === 'undefined' || !eda.sys_Storage || typeof eda.sys_Storage.getExtensionUserConfig !== 'function') return null;
+  try {
+    var keyed = await eda.sys_Storage.getExtensionUserConfig(key);
+    if (hasOwnPropertyOf(keyed, key)) return keyed[key];
+    if (looksLikeStorageRoot(keyed)) return null;
+    if (looksLikeStoredValue(keyed)) return keyed;
+  } catch(e) {}
+  try {
+    var root = await eda.sys_Storage.getExtensionUserConfig();
+    if (hasOwnPropertyOf(root, key)) return root[key];
+  } catch(e) {}
+  return null;
+}
+
 // ═══════════════════════════════════════
 // Init
 // ═══════════════════════════════════════
@@ -170,7 +220,7 @@ ctx = canvas.getContext('2d');
 
 (async function init() {
   try {
-    var vizData = await eda.sys_Storage.getExtensionUserConfig(VIZ_STORAGE_KEY);
+    var vizData = await storageGet(VIZ_STORAGE_KEY);
     if (vizData) {
       pcbData = vizData.pcbData;
       analysisResults = vizData.analysisData;

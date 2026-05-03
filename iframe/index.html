@@ -159,6 +159,7 @@ var VIZ_STORAGE_KEY = 'current-capacity-viz';
 
 var pcbData = null;
 var analysisData = null;
+var MIL_TO_MM = 0.0254;
 var OZ_TO_MM = 0.035;
 var currentStackup = {
   outerCopperOz: 1.6,
@@ -169,6 +170,281 @@ var currentStackup = {
 var sortColumn = 'imax';
 var sortAsc = true;
 var selectedRows = {}; // key → true
+var STORAGE_KEYS = [STORAGE_KEY, STACKUP_STORAGE_KEY, VIZ_STORAGE_KEY];
+
+function withTimeout(promise, timeoutMs) {
+  return new Promise(function(resolve, reject) {
+    var finished = false;
+    var timer = setTimeout(function() {
+      if (finished) return;
+      finished = true;
+      reject(new Error('Timed out waiting for EasyEDA storage'));
+    }, timeoutMs || 1000);
+    Promise.resolve(promise).then(function(value) {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      resolve(value);
+    }, function(error) {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+
+function hasOwnPropertyOf(value, key) {
+  return value && typeof value === 'object' && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function looksLikeStorageRoot(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  for (var i = 0; i < STORAGE_KEYS.length; i++) {
+    if (Object.prototype.hasOwnProperty.call(value, STORAGE_KEYS[i])) return true;
+  }
+  return false;
+}
+
+function looksLikeStoredValue(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) && (
+    Object.prototype.hasOwnProperty.call(value, 'lines') ||
+    Object.prototype.hasOwnProperty.call(value, 'arcs') ||
+    Object.prototype.hasOwnProperty.call(value, 'vias') ||
+    Object.prototype.hasOwnProperty.call(value, 'zones') ||
+    Object.prototype.hasOwnProperty.call(value, 'nets') ||
+    Object.prototype.hasOwnProperty.call(value, 'pcbData') ||
+    Object.prototype.hasOwnProperty.call(value, 'analysisData') ||
+    Object.prototype.hasOwnProperty.call(value, 'stackup') ||
+    Object.prototype.hasOwnProperty.call(value, 'outerCopperMm') ||
+    Object.prototype.hasOwnProperty.call(value, 'innerCopperMm') ||
+    Object.prototype.hasOwnProperty.call(value, 'preset')
+  );
+}
+
+function storageGetLocal(key) {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    var raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) {
+    return null;
+  }
+}
+
+function storageSetLocal(key, value) {
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch(e) {
+    return false;
+  }
+}
+
+async function storageGet(key) {
+  var localValue = storageGetLocal(key);
+  if (localValue !== null) return localValue;
+  if (typeof eda === 'undefined' || !eda.sys_Storage || typeof eda.sys_Storage.getExtensionUserConfig !== 'function') return null;
+  try {
+    var keyed = await withTimeout(eda.sys_Storage.getExtensionUserConfig(key), 800);
+    if (hasOwnPropertyOf(keyed, key)) return keyed[key];
+    if (looksLikeStorageRoot(keyed)) return null;
+    if (looksLikeStoredValue(keyed)) return keyed;
+  } catch(e) {}
+  try {
+    var root = await withTimeout(eda.sys_Storage.getExtensionUserConfig(), 800);
+    if (hasOwnPropertyOf(root, key)) return root[key];
+  } catch(e) {}
+  return null;
+}
+
+async function storageSet(key, value) {
+  var localOk = storageSetLocal(key, value);
+  if (typeof eda === 'undefined' || !eda.sys_Storage || typeof eda.sys_Storage.setExtensionUserConfig !== 'function') return localOk;
+  var easyOk = false;
+  try {
+    var keyedOk = await withTimeout(eda.sys_Storage.setExtensionUserConfig(key, value), 800);
+    easyOk = keyedOk !== false;
+  } catch(keyedError) {}
+  if (!easyOk) {
+    try {
+      var root = {};
+      try {
+        var existing = await withTimeout(eda.sys_Storage.getExtensionUserConfig(), 800);
+        if (existing && typeof existing === 'object' && !Array.isArray(existing)) root = existing;
+      } catch(readError) {}
+      root[key] = value;
+      var objectOk = await withTimeout(eda.sys_Storage.setExtensionUserConfig(root), 800);
+      easyOk = objectOk !== false;
+    } catch(objectError) {}
+  }
+  return localOk || easyOk;
+}
+
+async function extractPCBDataFromBoard() {
+  var result = {
+    unit: 'mm',
+    lines: [],
+    arcs: [],
+    vias: [],
+    pads: [],
+    zones: [],
+    copperLayerCount: null,
+    apiLayerNames: {},
+    copperLayerIds: {}
+  };
+
+  try {
+    var layerCount = await eda.pcb_Layer.getTheNumberOfCopperLayers();
+    if (typeof layerCount === 'number' && layerCount > 0) result.copperLayerCount = layerCount;
+  } catch(e) {}
+
+  try {
+    var layers = await eda.pcb_Layer.getAllLayers();
+    if (Array.isArray(layers)) {
+      for (var layerIndex = 0; layerIndex < layers.length; layerIndex++) {
+        var layer = layers[layerIndex];
+        if (layer && layer.id && layer.name) result.apiLayerNames[layer.id] = layer.name;
+      }
+    }
+  } catch(e) {}
+
+  var copperIds = { '1': true, '2': true };
+  for (var copperIndex = 15; copperIndex <= 46; copperIndex++) copperIds[String(copperIndex)] = true;
+  if (Object.keys(result.apiLayerNames).length > 0) {
+    var validCopperIds = {};
+    for (var copperId in copperIds) {
+      if (result.apiLayerNames[copperId]) validCopperIds[copperId] = true;
+    }
+    if (Object.keys(validCopperIds).length > 0) copperIds = validCopperIds;
+  }
+  result.copperLayerIds = copperIds;
+
+  function isCopperLayer(layerId) {
+    return copperIds[String(layerId)] === true;
+  }
+
+  function subdivideArc(sx, sy, ex, ey, angleDeg) {
+    var angleRad = angleDeg * Math.PI / 180;
+    if (Math.abs(angleRad) < 1e-6) return null;
+    var mx = (sx + ex) / 2;
+    var my = (sy + ey) / 2;
+    var dx = ex - sx;
+    var dy = ey - sy;
+    var halfChord = Math.sqrt(dx * dx + dy * dy) / 2;
+    if (halfChord < 1e-6) return null;
+    var halfAngle = angleRad / 2;
+    var d = halfChord / Math.tan(halfAngle);
+    var nx = -dy / (2 * halfChord);
+    var ny = dx / (2 * halfChord);
+    var cx = mx + d * nx;
+    var cy = my + d * ny;
+    var radius = halfChord / Math.sin(Math.abs(halfAngle));
+    var startAngle = Math.atan2(sy - cy, sx - cx);
+    var nSegs = Math.max(2, Math.ceil(Math.abs(angleDeg) / 5));
+    var stepAngle = angleRad / nSegs;
+    var points = [];
+    for (var pointIndex = 0; pointIndex <= nSegs; pointIndex++) {
+      var angle = startAngle + pointIndex * stepAngle;
+      points.push({ x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) });
+    }
+    var segments = [];
+    for (var segmentIndex = 0; segmentIndex < points.length - 1; segmentIndex++) {
+      segments.push({ x1: points[segmentIndex].x, y1: points[segmentIndex].y, x2: points[segmentIndex + 1].x, y2: points[segmentIndex + 1].y });
+    }
+    return segments;
+  }
+
+  try {
+    var lines = await eda.pcb_PrimitiveLine.getAll();
+    for (var lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      var line = lines[lineIndex];
+      try {
+        if (!isCopperLayer(line.layer)) continue;
+        result.lines.push({
+          type: 'WIRE',
+          id: line.primitiveId,
+          startX: line.startX * MIL_TO_MM,
+          startY: line.startY * MIL_TO_MM,
+          endX: line.endX * MIL_TO_MM,
+          endY: line.endY * MIL_TO_MM,
+          width: line.lineWidth * MIL_TO_MM,
+          layer: line.layer,
+          net: line.net
+        });
+      } catch(e) {}
+    }
+  } catch(e) {}
+
+  try {
+    var arcs = await eda.pcb_PrimitiveArc.getAll();
+    for (var arcIndex = 0; arcIndex < arcs.length; arcIndex++) {
+      var arc = arcs[arcIndex];
+      try {
+        if (!isCopperLayer(arc.layer)) continue;
+        var sx = arc.startX * MIL_TO_MM;
+        var sy = arc.startY * MIL_TO_MM;
+        var ex = arc.endX * MIL_TO_MM;
+        var ey = arc.endY * MIL_TO_MM;
+        var arcAngleDeg = arc.arcAngle || 0;
+        result.arcs.push({
+          type: 'ARC',
+          id: arc.primitiveId,
+          startX: sx,
+          startY: sy,
+          endX: ex,
+          endY: ey,
+          arcAngle: arcAngleDeg,
+          width: arc.lineWidth * MIL_TO_MM,
+          layer: arc.layer,
+          net: arc.net,
+          arcSegments: Math.abs(arcAngleDeg) > 0.1 ? subdivideArc(sx, sy, ex, ey, arcAngleDeg) : null
+        });
+      } catch(e) {}
+    }
+  } catch(e) {}
+
+  try {
+    var vias = await eda.pcb_PrimitiveVia.getAll();
+    for (var viaIndex = 0; viaIndex < vias.length; viaIndex++) {
+      var via = vias[viaIndex];
+      try {
+        result.vias.push({ type: 'VIA', id: via.primitiveId, x: via.x * MIL_TO_MM, y: via.y * MIL_TO_MM, diameter: via.diameter * MIL_TO_MM, holeDiameter: via.holeDiameter * MIL_TO_MM, net: via.net });
+      } catch(e) {}
+    }
+  } catch(e) {}
+
+  try {
+    var pads = await eda.pcb_PrimitivePad.getAll();
+    for (var padIndex = 0; padIndex < pads.length; padIndex++) {
+      var pad = pads[padIndex];
+      try {
+        result.pads.push({ type: 'PAD', id: pad.primitiveId, x: pad.x * MIL_TO_MM, y: pad.y * MIL_TO_MM, padWidth: pad.pad[1] * MIL_TO_MM, padHeight: pad.pad[2] * MIL_TO_MM, layer: pad.layer, net: pad.net || '', padNumber: pad.padNumber });
+      } catch(e) {}
+    }
+  } catch(e) {}
+
+  try {
+    var pours = await eda.pcb_PrimitivePour.getAll();
+    for (var pourIndex = 0; pourIndex < pours.length; pourIndex++) {
+      var pour = pours[pourIndex];
+      try {
+        if (!isCopperLayer(pour.layer)) continue;
+        var zoneEntry = { type: 'ZONE', id: pour.primitiveId, net: pour.net, layer: pour.layer };
+        try { if (pour.bounds) zoneEntry.bounds = pour.bounds; } catch(e) {}
+        try { if (pour.area) zoneEntry.area = pour.area; } catch(e) {}
+        try { if (pour.width) zoneEntry.width = pour.width * MIL_TO_MM; } catch(e) {}
+        try { if (pour.fillStyle !== undefined) zoneEntry.fillStyle = pour.fillStyle; } catch(e) {}
+        try { if (pour.thermal !== undefined) zoneEntry.thermal = pour.thermal; } catch(e) {}
+        try { if (pour.clearance) zoneEntry.clearance = pour.clearance * MIL_TO_MM; } catch(e) {}
+        result.zones.push(zoneEntry);
+      } catch(e) {}
+    }
+  } catch(e) {}
+
+  return result;
+}
 
 // ═══════════════════════════════════════
 // Init
@@ -176,7 +452,7 @@ var selectedRows = {}; // key → true
 (async function init() {
   // Load stackup
   try {
-    var saved = await eda.sys_Storage.getExtensionUserConfig(STACKUP_STORAGE_KEY);
+    var saved = await storageGet(STACKUP_STORAGE_KEY);
     if (saved && saved.outerCopperMm) {
       currentStackup.outerCopperMm = saved.outerCopperMm;
       currentStackup.innerCopperMm = saved.innerCopperMm || 0.0175;
@@ -187,7 +463,15 @@ var selectedRows = {}; // key → true
 
   // Load PCB data
   try {
-    var data = await eda.sys_Storage.getExtensionUserConfig(STORAGE_KEY);
+    setStatus('Reading PCB data directly...');
+    var directData = await extractPCBDataFromBoard();
+    if (directData && (directData.lines.length || directData.arcs.length || directData.zones.length)) {
+      storageSet(STORAGE_KEY, directData).catch(function() {});
+      onDataLoaded(directData);
+      return;
+    }
+    setStatus('Checking stored PCB data...');
+    var data = await storageGet(STORAGE_KEY);
     if (data && (data.lines || data.arcs || data.zones)) {
       onDataLoaded(data);
       return;
@@ -198,14 +482,22 @@ var selectedRows = {}; // key → true
 
 async function loadPCBData() {
   try {
-    var data = await eda.sys_Storage.getExtensionUserConfig(STORAGE_KEY);
+    setStatus('Reading PCB data directly...');
+    var data = await extractPCBDataFromBoard();
+    if (data && (data.lines.length || data.arcs.length || data.zones.length)) {
+      storageSet(STORAGE_KEY, data).catch(function() {});
+      onDataLoaded(data);
+      return;
+    }
+    setStatus('Checking stored PCB data...');
+    data = await storageGet(STORAGE_KEY);
     if (data && (data.lines || data.arcs || data.zones)) {
       onDataLoaded(data);
     } else {
       setStatus('No PCB data found. Run extension from PCB menu first.');
     }
   } catch(e) {
-    setStatus('Error loading data: ' + e);
+    setStatus('Error loading data: ' + (e && e.message ? e.message : String(e)));
   }
 }
 
@@ -809,7 +1101,7 @@ document.getElementById('btn-save-settings').addEventListener('click', function(
   currentStackup.innerCopperMm = currentStackup.innerCopperOz * OZ_TO_MM;
   closeSettings();
   // Save
-  try { eda.sys_Storage.setExtensionUserConfig(STACKUP_STORAGE_KEY, currentStackup); } catch(e) {}
+  storageSet(STACKUP_STORAGE_KEY, currentStackup).catch(function() {});
   // Recalculate
   analyzeCurrentCapacity();
   renderAll();
@@ -833,7 +1125,7 @@ document.getElementById('btn-export').addEventListener('click', function() {
 // Visualize
 document.getElementById('btn-viz').addEventListener('click', async function() {
   try {
-    await eda.sys_Storage.setExtensionUserConfig(VIZ_STORAGE_KEY, {
+    await storageSet(VIZ_STORAGE_KEY, {
       pcbData: pcbData,
       analysisData: analysisData,
       stackup: currentStackup,
